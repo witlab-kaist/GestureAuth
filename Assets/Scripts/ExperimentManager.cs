@@ -1,0 +1,1058 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
+using UnityEngine;
+using UnityEngine.XR.Hands;
+using TMPro;
+using UnityEngine.UI;
+using System.Diagnostics;
+using Unity.XR.CoreUtils;
+
+public class ExperimentManager : MonoBehaviour
+{
+    #region Constants
+    private const double GestureScoreThreshold = 0.25f;
+    private const uint GestureSimplificationScoreThreshold = 3;
+    private const float GestureLengthThreshold = 0.45f;
+    private const long TutorialFeedbackIntervalMs = 2000;
+    private const float BoardDistance = 4f;
+    private const float InteractionCubeDistance = 0.4f;
+    private const float InteractionRegionDistance = 0.2f;
+
+    private static readonly Vector3 BoardPositionOffset = new Vector3(0, 1f, 0);
+    private static readonly Vector3 InteractionCubePositionOffset = new Vector3(0, -0.195f, 0);
+    private static readonly Vector3 InteractionRegionPositionOffset = new Vector3(0, -0.195f, 0);
+    private static readonly Quaternion InteractionCubeLeftRotation = Quaternion.Euler(0, -40, 0);
+    private static readonly Quaternion InteractionCubeRightRotation = Quaternion.Euler(0, 40, 0);
+    #endregion
+
+    #region Enums
+    private enum ExperimentStage
+    {
+        Uninitialized,
+        Setup,
+        Tutorial,
+        Create,
+        Match,
+        Practice,
+        Distract,
+        Recall,
+        Finish,
+        RecallSetup
+    }
+
+    private enum TutorialStage
+    {
+        AxisX,
+        AxisY,
+        AxisZ,
+        Diagonal
+    }
+    #endregion
+
+    #region Fields
+    private ExperimentStage currentStage;
+    private TutorialStage currentTutorialStage;
+    private string experimentPath;
+    private string logPath;
+    private string sampleDir;
+    private string queryDir;
+
+    private XRHandSubsystem handSubsystem;
+    private GestureHandler gestureHandler;
+    private InteractionHandler interactionHandler;
+
+    private GameObject localCoordinateFrame;
+    private uint currentPracticeAttempt;
+    private uint currentRecallAttempt;
+    private bool isDistractFinished;
+    private bool isRecallSuccessful;
+
+    private readonly Stopwatch totalTimer = new Stopwatch();
+    private readonly Stopwatch stageTimer = new Stopwatch();
+    private readonly Stopwatch feedbackTimer = new Stopwatch();
+    private readonly Stopwatch distractTimer = new Stopwatch();
+    private bool isStageActive;
+    private bool isFeedbackActive;
+    #endregion
+
+    #region Serialized Fields
+    [SerializeField] private string subjectCode;
+    [SerializeField] private bool continueExperiment;
+    [SerializeField] private uint practiceRounds;
+    [SerializeField] private uint recallAttempts;
+    [SerializeField] private long distractTimeSeconds;
+
+    [SerializeField] private LineRenderer gestureTrail;
+    [SerializeField] private Transform mainCameraTransform;
+    [SerializeField] private GameObject interactionCubeLeft;
+    [SerializeField] private GameObject interactionCubeRight;
+    [SerializeField] private GameObject interactionRegion;
+    [SerializeField] private GameObject informationBoard;
+    [SerializeField] private GameObject feedbackSphere;
+    [SerializeField] private LineRenderer tutorialLine;
+    [SerializeField] private GameObject startPoint;
+    [SerializeField] private GameObject endPoint;
+
+    [SerializeField] private TextMeshProUGUI infoTextCenter;
+    [SerializeField] private TextMeshProUGUI infoTextCenterTop;
+    [SerializeField] private TextMeshProUGUI infoTextCenterBottom;
+    [SerializeField] private TextMeshProUGUI infoTextLeft;
+    [SerializeField] private TextMeshProUGUI infoTextRight;
+    [SerializeField] private Image infoPicture;
+    [SerializeField] private Sprite rightHandPinchSprite;
+    [SerializeField] private Sprite rightHandOpenSprite;
+    #endregion
+
+    #region Unity Methods
+    private void Start()
+    {
+        InitializeExperiment();
+        experimentPath = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), "Experiment", $"Sub_{subjectCode}");
+
+        if (continueExperiment)
+            LoadPreviousExperiment();
+        else
+            SetupNewExperiment();
+    }
+
+    private void Update()
+    {
+        switch (currentStage)
+        {
+            case ExperimentStage.Distract:
+                UpdateDistractStage();
+                break;
+            case ExperimentStage.Uninitialized:
+                break;
+            default:
+                if (isFeedbackActive)
+                    UpdateFeedback();
+                else if (handSubsystem == null)
+                    RestartStageFromInitialization();
+                break;
+        }
+    }
+    #endregion
+
+    #region Initialization
+    private void InitializeExperiment()
+    {
+        localCoordinateFrame = new GameObject("LocalCoordinateFrame");
+        interactionHandler = new InteractionHandler(interactionCubeLeft, interactionCubeRight);
+    }
+
+    private void LoadPreviousExperiment()
+    {
+        string[] logFiles = Directory.GetFiles(experimentPath, "*_log.txt");
+        if (logFiles.Length == 0) throw new DirectoryNotFoundException("No log files found.");
+
+        string latestTimestamp = FindLatestTimestamp(logFiles, @"(\d+)_log.txt");
+        logPath = Path.Combine(experimentPath, $"{latestTimestamp}_log.txt");
+        experimentPath = Path.Combine(experimentPath, "gestures", latestTimestamp);
+
+        string[] createDirs = Directory.GetDirectories(experimentPath, "*_create");
+        if (createDirs.Length == 0) throw new DirectoryNotFoundException("No create directories found.");
+        sampleDir = $"{FindLatestTimestamp(createDirs, @"(\d+)_create")}_create";
+
+        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), feedbackSphere);
+        TransitionToRecallSetup();
+    }
+
+    private void SetupNewExperiment()
+    {
+        string timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        logPath = Path.Combine(experimentPath, $"{timestamp}_log.txt");
+        experimentPath = Path.Combine(experimentPath, "gestures", timestamp);
+
+        if (!Directory.Exists(experimentPath))
+            CreateExperimentDirectories();
+
+        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), feedbackSphere);
+        currentTutorialStage = TutorialStage.AxisX;
+        totalTimer.Start();
+        TransitionToSetup();
+    }
+
+    private void CreateExperimentDirectories()
+    {
+        Directory.CreateDirectory(experimentPath);
+        string tutorialPath = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), "Tutorial");
+
+        foreach (string tutorial in Enum.GetNames(typeof(TutorialStage)))
+        {
+            string dir = Path.Combine(experimentPath, tutorial);
+            Directory.CreateDirectory(dir);
+            File.Copy(Path.Combine(tutorialPath, tutorial, "ex.txt"), Path.Combine(dir, "ex.txt"));
+        }
+    }
+
+    private string FindLatestTimestamp(string[] paths, string pattern)
+    {
+        var timestamps = paths.Select(path => Regex.Match(Path.GetFileName(path), pattern))
+                              .Where(match => match.Success)
+                              .Select(match => match.Groups[1].Value)
+                              .ToList();
+        if (!timestamps.Any()) throw new ArgumentException("No matching timestamps found.");
+        return timestamps.Max();
+    }
+    #endregion
+
+    #region Stage Transitions
+    private void TransitionToSetup()
+    {
+        currentStage = ExperimentStage.Setup;
+        SetInformationUI(center: true, picture: true);
+        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
+        infoTextCenter.text = "Put your <b>right</b> hand into the cube and wait";
+        infoPicture.sprite = rightHandOpenSprite;
+
+        interactionHandler.PromptUser = () =>
+        {
+            PositionObject(informationBoard, mainCameraTransform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
+            PositionObject(interactionCubeLeft, mainCameraTransform, InteractionCubePositionOffset, InteractionCubePositionOffset, Quaternion.identity, InteractionCubeDistance);
+        };
+        interactionHandler.OnCube1Selected = () =>
+        {
+            RecordCurrentTransform();
+            TransitionToTutorial();
+        };
+        interactionHandler.OnCube2Selected = null;
+
+        InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
+    }
+
+    private void TransitionToTutorial()
+    {
+        currentStage = ExperimentStage.Tutorial;
+        SetInformationUI(center: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        EnableTutorialElements(true);
+        infoTextCenter.text = "Pinch with your <b>right</b> hand to start a gesture\nRelease the pinch to finish a gesture\nConnect two dots starting from the <color=red>RED</color> dot";
+        infoPicture.sprite = rightHandPinchSprite;
+
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+        ConfigureGestureCallbacks(TutorialStageFailed);
+        SetupTutorialStep();
+        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+    }
+
+    private void TransitionToCreate()
+    {
+        currentStage = ExperimentStage.Create;
+        if (isFeedbackActive && feedbackTimer.ElapsedMilliseconds < TutorialFeedbackIntervalMs)
+            return;
+
+        isFeedbackActive = false;
+        gestureHandler.Clear();
+        SetInformationUI(center: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenter.text = "Create a gesture\nDraw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
+        infoPicture.sprite = rightHandPinchSprite;
+
+        sampleDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_create";
+        Directory.CreateDirectory(Path.Combine(experimentPath, sampleDir));
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+
+        ConfigureGestureCallbacks(CreateStageFailed, CreateStagePassed);
+        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+    }
+
+    private void TransitionToMatch()
+    {
+        currentStage = ExperimentStage.Match;
+        gestureHandler.Clear();
+        SetInformationUI(center: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenter.text = "Match the gesture\nDraw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
+        infoPicture.sprite = rightHandPinchSprite;
+
+        queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_match";
+        Directory.CreateDirectory(Path.Combine(experimentPath, queryDir));
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+
+        ConfigureGestureCallbacks(MatchStageFailed, () =>
+        {
+            stageTimer.Stop();
+            isStageActive = false;
+            Log($"Create Time: {stageTimer.ElapsedMilliseconds}ms");
+            TransitionToPractice();
+        });
+        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+    }
+
+    private void TransitionToPractice()
+    {
+        currentStage = ExperimentStage.Practice;
+        gestureHandler.Clear();
+        SetInformationUI();
+
+        if (currentPracticeAttempt >= practiceRounds)
+        {
+            stageTimer.Stop();
+            isStageActive = false;
+            Log($"Practice Time: {stageTimer.ElapsedMilliseconds}ms");
+            TransitionToDistract();
+            return;
+        }
+
+        Log($"Practice attempt {currentPracticeAttempt}/{practiceRounds}");
+        SetupPracticeUI();
+        queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_practice_{currentPracticeAttempt}";
+        Directory.CreateDirectory(Path.Combine(experimentPath, queryDir));
+        currentPracticeAttempt++;
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+
+        ConfigureGestureCallbacks(PracticeStageFailed, PracticeStagePassed);
+        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+    }
+
+    private void TransitionToDistract()
+    {
+        currentStage = ExperimentStage.Distract;
+        distractTimer.Start();
+        SetInformationUI(centerBottom: true);
+    }
+
+    private void TransitionToRecall()
+    {
+        currentStage = ExperimentStage.Recall;
+        gestureHandler.Clear();
+        SetInformationUI();
+
+        if (currentRecallAttempt >= recallAttempts || isRecallSuccessful)
+        {
+            stageTimer.Stop();
+            isStageActive = false;
+            Log($"Recall Time: {stageTimer.ElapsedMilliseconds}ms");
+            Log($"Recall Fails: {(isRecallSuccessful ? currentRecallAttempt - 1 : recallAttempts)}");
+            TransitionToFinish();
+            return;
+        }
+
+        Log($"Recall attempt {currentRecallAttempt}/{recallAttempts}");
+        SetupRecallUI();
+        queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_recall_{currentRecallAttempt}";
+        Directory.CreateDirectory(Path.Combine(experimentPath, queryDir));
+        currentRecallAttempt++;
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+
+        ConfigureGestureCallbacks(RecallStageFailed, () =>
+        {
+            isRecallSuccessful = true;
+            PromptToContinue(TransitionToRecall);
+            infoTextCenter.text = $"<color=green>The gestures match!</color>\n\n{infoTextCenter.text}";
+        });
+        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+    }
+
+    private void TransitionToFinish()
+    {
+        currentStage = ExperimentStage.Finish;
+        gestureHandler.Clear();
+        SetInformationUI(centerBottom: true);
+        infoTextCenterBottom.text = "The experiment is over. Thank you for participation!";
+        totalTimer.Stop();
+        Log($"Total Time: {totalTimer.ElapsedMilliseconds / 1000}s");
+    }
+
+    private void TransitionToRecallSetup()
+    {
+        currentStage = ExperimentStage.RecallSetup;
+        gestureHandler.Clear();
+        SetInformationUI(center: true, picture: true);
+        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
+        infoTextCenter.text = "Welcome back\nPut your <b>right</b> hand into the cube and wait to continue";
+        infoPicture.sprite = rightHandOpenSprite;
+
+        interactionHandler.PromptUser = () =>
+        {
+            PositionObject(informationBoard, mainCameraTransform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
+            PositionObject(interactionCubeLeft, mainCameraTransform, InteractionCubePositionOffset, InteractionCubePositionOffset, Quaternion.identity, InteractionCubeDistance);
+        };
+        interactionHandler.OnCube1Selected = () =>
+        {
+            RecordCurrentTransform();
+            TransitionToRecall();
+        };
+        interactionHandler.OnCube2Selected = null;
+        InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
+    }
+    #endregion
+
+    #region Stage Updates
+    private void UpdateDistractStage()
+    {
+        if (isDistractFinished)
+        {
+            currentStage = ExperimentStage.Uninitialized;
+            SetInformationUI(center: true, picture: true);
+            interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
+            infoTextCenter.text = "Put your <b>right</b> hand into the cube and wait to continue";
+            infoPicture.sprite = rightHandOpenSprite;
+
+            interactionHandler.PromptUser = () =>
+            {
+                PositionObject(informationBoard, mainCameraTransform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
+                PositionObject(interactionCubeLeft, mainCameraTransform, InteractionCubePositionOffset, InteractionCubePositionOffset, Quaternion.identity, InteractionCubeDistance);
+            };
+            interactionHandler.OnCube1Selected = () =>
+            {
+                RecordCurrentTransform();
+                TransitionToRecall();
+            };
+            interactionHandler.OnCube2Selected = null;
+            InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
+            return;
+        }
+
+        if (distractTimer.ElapsedMilliseconds / 1000 >= distractTimeSeconds)
+        {
+            distractTimer.Stop();
+            Log("Distract time is up");
+            isDistractFinished = true;
+        }
+        else
+        {
+            long secondsLeft = distractTimeSeconds - distractTimer.ElapsedMilliseconds / 1000;
+            infoTextCenterBottom.text = $"Put your headset away and wait\n{secondsLeft / 60:00}:{secondsLeft % 60:00}";
+        }
+    }
+
+    private void UpdateFeedback()
+    {
+        if (feedbackTimer.ElapsedMilliseconds >= TutorialFeedbackIntervalMs)
+        {
+            isFeedbackActive = false;
+            TransitionToCreate();
+        }
+    }
+
+    private void RestartStageFromInitialization()
+    {
+        if (currentStage == ExperimentStage.Setup)
+            TransitionToSetup();
+        else if (currentStage == ExperimentStage.RecallSetup)
+            TransitionToRecallSetup();
+    }
+    #endregion
+
+    #region Stage Helpers
+    private void SetupTutorialStep()
+    {
+        (string dir, Vector3 start, Vector3 end, Action onPass) setup = currentTutorialStage switch
+        {
+            TutorialStage.AxisX => ("AxisX", new Vector3(-0.4f, 0, 0), new Vector3(0.4f, 0, 0), () => { currentTutorialStage = TutorialStage.AxisY; PromptToContinue(TransitionToTutorial); }),
+            TutorialStage.AxisY => ("AxisY", new Vector3(0, 0.4f, 0), new Vector3(0, -0.4f, 0), () => { currentTutorialStage = TutorialStage.AxisZ; PromptToContinue(TransitionToTutorial); }),
+            TutorialStage.AxisZ => ("AxisZ", new Vector3(0, 0, -0.4f), new Vector3(0, 0, 0.4f), () => { currentTutorialStage = TutorialStage.Diagonal; PromptToContinue(TransitionToTutorial); }),
+            TutorialStage.Diagonal => ("Diagonal", new Vector3(-0.4f, -0.4f, -0.4f), new Vector3(0.4f, 0.4f, 0.4f), () =>
+            {
+                stageTimer.Stop();
+                isStageActive = false;
+                Log($"Tutorial Time: {stageTimer.ElapsedMilliseconds}ms");
+                PromptToContinue(() =>
+                {
+                    SetInformationUI(center: true);
+                    infoTextCenter.text = "Now, you will create your own gesture";
+                    isFeedbackActive = true;
+                    feedbackTimer.Restart();
+                    TransitionToCreate();
+                });
+            }
+            ),
+            _ => throw new InvalidOperationException("Unknown tutorial stage")
+        };
+
+        sampleDir = setup.dir;
+        queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_tutorial_{currentTutorialStage.ToString().ToLower()}";
+        Directory.CreateDirectory(Path.Combine(experimentPath, queryDir));
+        PositionTutorialLine(setup.start, setup.end);
+        gestureHandler.OnGesturePassed = () =>
+        {
+            setup.onPass();
+            infoTextCenter.text = $"<color=green>The gesture matches the example!</color>\n\n{infoTextCenter.text}";
+        };
+    }
+
+    private void CreateStagePassed()
+    {
+        SetInformationUI(center: true, left: true, right: true, picture: true);
+        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
+        interactionCubeRight.GetComponent<MeshRenderer>().enabled = true;
+        infoTextCenter.text = "Confirm the gesture";
+        infoTextLeft.text = "Put your <b>right</b> hand into the <b>LEFT</b> cube\nand wait to <color=red>create a new gesture</color>";
+        infoTextRight.text = "Put your <b>right</b> hand into the <b>RIGHT</b> cube\nand wait to <color=green>confirm the gesture</color>";
+        infoPicture.sprite = rightHandOpenSprite;
+
+        PositionObject(interactionCubeLeft, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeLeftRotation, InteractionCubeDistance);
+        PositionObject(interactionCubeRight, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeRightRotation, InteractionCubeDistance);
+
+        interactionHandler.PromptUser = null;
+        interactionHandler.OnCube1Selected = () => { Log("Gesture cancelled"); TransitionToCreate(); };
+        interactionHandler.OnCube2Selected = TransitionToMatch;
+        InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
+    }
+
+    private void MatchStageFailed()
+    {
+        gestureHandler.Clear();
+        SetInformationUI(center: true, left: true, right: true, picture: true);
+        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
+        interactionCubeRight.GetComponent<MeshRenderer>().enabled = true;
+        infoTextCenter.text = "<color=red>The gestures don't match</color>";
+        infoTextLeft.text = "Put your <b>right</b> hand into the <b>LEFT</b> cube\nand wait to create a new gesture";
+        infoTextRight.text = "Put your <b>right</b> hand into the <b>RIGHT</b> cube\nand wait to try matching again";
+        infoPicture.sprite = rightHandOpenSprite;
+
+        PositionObject(interactionCubeLeft, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeLeftRotation, InteractionCubeDistance);
+        PositionObject(interactionCubeRight, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeRightRotation, InteractionCubeDistance);
+
+        interactionHandler.PromptUser = null;
+        interactionHandler.OnCube1Selected = TransitionToCreate;
+        interactionHandler.OnCube2Selected = TransitionToMatch;
+        InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
+    }
+
+    private void TutorialStageFailed() => PromptToContinue(TransitionToTutorial, "<color=red>The gesture doesn't match the example!</color>");
+    private void CreateStageFailed() => PromptToContinue(TransitionToCreate, "The gesture is too simple\nPlease, try again");
+    private void PracticeStageFailed() => PromptToContinue(TransitionToPractice, "<color=red>The gestures don't match!</color>");
+    private void PracticeStagePassed() => PromptToContinue(TransitionToPractice, "<color=green>The gestures match!</color>");
+    private void RecallStageFailed() => PromptToContinue(TransitionToRecall, "<color=red>The gestures don't match!</color>");
+
+    private void SetupPracticeUI()
+    {
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenterTop.enabled = infoTextCenterBottom.enabled = infoPicture.enabled = true;
+        infoTextCenterTop.text = $"Practice {currentPracticeAttempt}/{practiceRounds}";
+        infoTextCenterBottom.text = "Draw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
+        infoPicture.sprite = rightHandPinchSprite;
+    }
+
+    private void SetupRecallUI()
+    {
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenterTop.enabled = infoTextCenterBottom.enabled = infoPicture.enabled = true;
+        infoTextCenterTop.text = $"Recall Attempt {currentRecallAttempt}/{recallAttempts}";
+        infoTextCenterBottom.text = "Draw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
+        infoPicture.sprite = rightHandPinchSprite;
+    }
+    #endregion
+
+    #region Helpers
+    private void ConfigureGestureCallbacks(Action onFail, Action onPass = null)
+    {
+        gestureHandler.OnGestureStarted = () =>
+        {
+            if (!isStageActive)
+            {
+                stageTimer.Restart();
+                isStageActive = true;
+            }
+            Log("Started drawing a gesture");
+        };
+        gestureHandler.OnGestureFinished = () =>
+        {
+            Log("Finished drawing a gesture");
+            if (currentStage == ExperimentStage.Create)
+                SaveSampleRecord();
+            else
+                SaveQueryRecord();
+        };
+        gestureHandler.OnGestureFailed = onFail;
+        gestureHandler.OnGesturePassed = onPass;
+    }
+
+    private void PromptToContinue(Action nextStage, string feedback = "")
+    {
+        currentStage = ExperimentStage.Uninitialized;
+        gestureHandler.Clear();
+        SetInformationUI(center: true, picture: true);
+        interactionCubeRight.GetComponent<MeshRenderer>().enabled = true;
+        infoTextCenter.text = $"{feedback}{(string.IsNullOrEmpty(feedback) ? "" : "\n\n")}Put your <b>right</b> hand into the cube and wait";
+        infoPicture.sprite = rightHandOpenSprite;
+
+        PositionObject(interactionCubeRight, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeRightRotation, InteractionCubeDistance);
+        interactionHandler.PromptUser = null;
+        interactionHandler.OnCube1Selected = null;
+        interactionHandler.OnCube2Selected = nextStage;
+        InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
+    }
+
+    private void PositionObject(GameObject obj, Transform frame, Vector3 offset, Vector3 lookOffset, Quaternion rotation, float distance)
+    {
+        Vector3 forward = new Vector3(frame.forward.x, 0, frame.forward.z).normalized;
+        obj.transform.position = frame.position + offset + rotation * forward * (distance + obj.transform.localScale.z / 2);
+        obj.transform.LookAt(frame.position + lookOffset);
+        obj.transform.forward *= -1;
+    }
+
+    private void PositionTutorialLine(Vector3 start, Vector3 end)
+    {
+        startPoint.transform.position = interactionRegion.transform.TransformPoint(start);
+        endPoint.transform.position = interactionRegion.transform.TransformPoint(end);
+        tutorialLine.SetPosition(0, start);
+        tutorialLine.SetPosition(1, end);
+    }
+
+    private void RecordCurrentTransform()
+    {
+        localCoordinateFrame.transform.SetPositionAndRotation(mainCameraTransform.position, mainCameraTransform.rotation);
+    }
+
+    private void InitializeHandSubsystem(Action<XRHandSubsystem, XRHandSubsystem.UpdateSuccessFlags, XRHandSubsystem.UpdateType> onUpdate)
+    {
+        var handSubsystems = new List<XRHandSubsystem>();
+        SubsystemManager.GetSubsystems(handSubsystems);
+        handSubsystem = handSubsystems.FirstOrDefault(s => s.running);
+        if (handSubsystem != null)
+            handSubsystem.updatedHands += onUpdate;
+    }
+
+    private void SaveSampleRecord()
+    {
+        gestureHandler.Save(sampleDir);
+        Log($"Gesture saved to {Path.Combine(experimentPath, sampleDir, "ex.txt")}");
+        Log($"Timestamps saved to {Path.Combine(experimentPath, sampleDir, "timestamps.txt")}");
+
+        int simplificationScore = gestureHandler.SimplificationScore();
+        float length = gestureHandler.Length();
+        Log($"Gesture simplification score: {simplificationScore}");
+        Log($"Gesture length: {length}");
+
+        bool isValid = simplificationScore >= GestureSimplificationScoreThreshold && length >= GestureLengthThreshold;
+        Log($"Draw Time ({(isValid ? "Valid" : "Invalid")}): {gestureHandler.DrawTimeMs}ms");
+        (isValid ? gestureHandler.OnGesturePassed : gestureHandler.OnGestureFailed)?.Invoke();
+    }
+
+    private void SaveQueryRecord()
+    {
+        gestureHandler.Save(queryDir);
+        Log($"Gesture saved to {Path.Combine(experimentPath, queryDir, "ex.txt")}");
+        Log($"Timestamps saved to {Path.Combine(experimentPath, queryDir, "timestamps.txt")}");
+
+        double matchScore = gestureHandler.JackknifeScore(sampleDir, queryDir);
+        Log($"Gesture match score: {matchScore:0.#######}");
+        bool isMatch = matchScore >= GestureScoreThreshold;
+        Log($"Draw Time ({(isMatch ? "Passed" : "Failed")}): {gestureHandler.DrawTimeMs}ms");
+        (isMatch ? gestureHandler.OnGesturePassed : gestureHandler.OnGestureFailed)?.Invoke();
+    }
+
+    private void SetInformationUI(bool center = false, bool centerTop = false, bool centerBottom = false, bool left = false, bool right = false, bool picture = false)
+    {
+        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = false;
+        interactionCubeRight.GetComponent<MeshRenderer>().enabled = false;
+        interactionRegion.GetComponent<LineRenderer>().enabled = false;
+        EnableTutorialElements(false);
+
+        infoTextCenter.enabled = center;
+        infoTextCenterTop.enabled = centerTop;
+        infoTextCenterBottom.enabled = centerBottom;
+        infoTextLeft.enabled = left;
+        infoTextRight.enabled = right;
+        infoPicture.enabled = picture;
+    }
+
+    private void EnableTutorialElements(bool enable)
+    {
+        tutorialLine.enabled = enable;
+        startPoint.GetComponent<MeshRenderer>().enabled = enable;
+        endPoint.GetComponent<MeshRenderer>().enabled = enable;
+    }
+
+    private void Log(string message)
+    {
+        using (var sw = new StreamWriter(logPath, true))
+        {
+            string prefix = $"[{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}] [{DateTime.Now}] {{{currentStage}}}";
+            if (currentStage == ExperimentStage.Tutorial)
+                prefix += $" [{currentTutorialStage}]";
+            sw.WriteLine($"{prefix} {message}");
+        }
+    }
+    #endregion
+}
+
+internal class InteractionHandler
+{
+    private const long InteractionTimeThresholdMs = 500;
+    private const float AlphaSpeed = 0.25f;
+    private const float ExpansionSpeed = 0.02f;
+
+    public Action PromptUser { get; set; }
+    public Action OnCube1Selected { get; set; }
+    public Action OnCube2Selected { get; set; }
+
+    private readonly GameObject cube1;
+    private readonly GameObject cube2;
+    private readonly Stopwatch timer1 = new Stopwatch();
+    private readonly Stopwatch timer2 = new Stopwatch();
+    private bool isColliding1;
+    private bool isColliding2;
+    private readonly Vector3 originalScale;
+    private readonly Color originalColor;
+
+    public InteractionHandler(GameObject cube1, GameObject cube2)
+    {
+        this.cube1 = cube1;
+        this.cube2 = cube2;
+        originalColor = cube1.GetComponent<Renderer>().material.color;
+        originalScale = cube1.transform.localScale;
+    }
+
+    public void OnUpdatedHandsPromptUser(XRHandSubsystem subsystem, XRHandSubsystem.UpdateSuccessFlags flags, XRHandSubsystem.UpdateType type)
+    {
+        PromptUser?.Invoke();
+
+        if (OnCube1Selected != null && TryRecordInteraction(cube1, timer1, ref isColliding1))
+        {
+            subsystem.updatedHands -= OnUpdatedHandsPromptUser;
+            OnCube1Selected();
+        }
+        if (OnCube2Selected != null && TryRecordInteraction(cube2, timer2, ref isColliding2))
+        {
+            subsystem.updatedHands -= OnUpdatedHandsPromptUser;
+            OnCube2Selected();
+        }
+    }
+
+    private bool TryRecordInteraction(GameObject cube, Stopwatch timer, ref bool isColliding)
+    {
+        bool colliding = cube.GetComponent<CollisionDetection>().CollidingObjects > 0;
+        if (colliding)
+        {
+            if (!isColliding)
+            {
+                isColliding = true;
+                ResetCube(cube);
+                timer.Restart();
+            }
+
+            var renderer = cube.GetComponent<Renderer>();
+            renderer.material.color = new Color(originalColor.r, originalColor.g, originalColor.b, renderer.material.color.a + Time.deltaTime * AlphaSpeed);
+            cube.transform.localScale += Vector3.one * Time.deltaTime * ExpansionSpeed;
+
+            if (timer.ElapsedMilliseconds >= InteractionTimeThresholdMs)
+            {
+                isColliding = false;
+                return true;
+            }
+        }
+        else if (isColliding)
+        {
+            isColliding = false;
+            ResetCube(cube);
+        }
+        return false;
+    }
+
+    private void ResetCube(GameObject cube)
+    {
+        cube.GetComponent<Renderer>().material.color = originalColor;
+        cube.transform.localScale = originalScale;
+    }
+}
+
+public class GestureHandler
+{
+    #region Constants
+    private const float PinchEntryThreshold = 0.9f;
+    private const float PinchDistanceThreshold = 0.03f;
+    private const float PinchDisableDistanceThreshold = 0.06f;
+    private const long PinchIgnoreTimeThresholdMs = 500;
+    private const float GestureIgnoreLengthThreshold = 0.1f;
+    private const float SmoothingFactor = 16f;
+    private const float SimplificationTolerance = 0.13f;
+    private const long DistanceToleranceMs = 1500;
+    private const long RegionToleranceMs = 1500;
+    #endregion
+
+    #region Fields
+    public Action OnGestureStarted { get; set; }
+    public Action OnGestureFinished { get; set; }
+    public Action OnGesturePassed { get; set; }
+    public Action OnGestureFailed { get; set; }
+
+    private readonly string experimentPath;
+    private readonly Transform regionTransform;
+    private readonly TrailHandler trailHandler;
+    private readonly GameObject feedbackSphere;
+    private readonly Bounds regionBounds = new Bounds(Vector3.zero, Vector3.one);
+
+    private readonly List<Vector3> gesture = new List<Vector3>();
+    private readonly List<long> timestamps = new List<long>();
+    private Vector3 lastWorldPoint;
+    private bool isPinchActive;
+    private bool isGestureActive;
+
+    private readonly HashSet<XRHandJointID> validJoints = new HashSet<XRHandJointID>();
+    private readonly List<List<Vector3>> jointPositions;
+    private readonly List<List<Quaternion>> jointRotations;
+    private readonly List<float> jointRadii;
+
+    private readonly Stopwatch drawTimer = new Stopwatch();
+    private readonly Stopwatch distanceTimer = new Stopwatch();
+    private readonly Stopwatch regionTimer = new Stopwatch();
+    private bool isOutOfDistance;
+    private bool isOutOfRegion;
+    #endregion
+
+    #region Properties
+    public long DrawTimeMs => drawTimer.ElapsedMilliseconds;
+    #endregion
+
+    public GestureHandler(string experimentPath, Transform regionTransform, TrailHandler trailHandler, GameObject feedbackSphere)
+    {
+        this.experimentPath = experimentPath;
+        this.regionTransform = regionTransform;
+        this.trailHandler = trailHandler;
+        this.feedbackSphere = feedbackSphere;
+
+        int jointCount = Enum.GetNames(typeof(XRHandJointID)).Length;
+        jointPositions = Enumerable.Repeat(new List<Vector3>(), jointCount).ToList();
+        jointRotations = Enumerable.Repeat(new List<Quaternion>(), jointCount).ToList();
+        jointRadii = Enumerable.Repeat(0f, jointCount).ToList();
+
+        foreach (XRHandJointID joint in Enum.GetValues(typeof(XRHandJointID)).Cast<XRHandJointID>())
+            if (joint != XRHandJointID.Invalid && joint != XRHandJointID.EndMarker)
+                validJoints.Add(joint);
+    }
+
+    public void OnUpdatedHandsRecord(XRHandSubsystem subsystem, XRHandSubsystem.UpdateSuccessFlags flags, XRHandSubsystem.UpdateType type)
+    {
+        float pinchStrength = MetaAimHand.right.pinchStrengthIndex.magnitude;
+        bool pinchEntered = !isPinchActive && pinchStrength >= PinchEntryThreshold;
+
+        if (pinchEntered)
+        {
+            isPinchActive = true;
+            feedbackSphere.GetComponent<MeshRenderer>().enabled = true;
+            if (TryRecordPosition(subsystem))
+            {
+                OnGestureStarted?.Invoke();
+                drawTimer.Restart();
+                isGestureActive = true;
+            }
+        }
+
+        if (isGestureActive && !TryRecordPosition(subsystem))
+        {
+            drawTimer.Stop();
+            feedbackSphere.GetComponent<MeshRenderer>().enabled = false;
+
+            if (drawTimer.ElapsedMilliseconds < PinchIgnoreTimeThresholdMs || Length() < GestureIgnoreLengthThreshold)
+            {
+                Clear();
+                return;
+            }
+
+            subsystem.updatedHands -= OnUpdatedHandsRecord;
+            OnGestureFinished?.Invoke();
+        }
+    }
+
+    public double JackknifeScore(string sampleDir, string queryDir)
+    {
+        var dataset = new Jackknife.Evaluate.Dataset();
+        var blades = new Jackknife.JackknifeBlades();
+        Jackknife.Evaluate.Dataset.LoadSubjectDataset(dataset, experimentPath);
+        blades.SetIPDefaults();
+
+        var jackknife = new Jackknife.Jackknife(blades);
+        foreach (var sample in dataset.SamplesByGesture[dataset.Gestures.IndexOf(sampleDir)])
+            jackknife.AddTemplate(sample);
+
+        double score = 1 / jackknife.MatchScore(dataset.SamplesByGesture[dataset.Gestures.IndexOf(queryDir)][0]);
+        return score;
+    }
+
+    public int SimplificationScore()
+    {
+        if (gesture.Count == 0) return 0;
+
+        float minX = gesture.Min(p => p.x), minY = gesture.Min(p => p.y), minZ = gesture.Min(p => p.z);
+        float maxRange = Mathf.Max(gesture.Max(p => p.x - minX), gesture.Max(p => p.y - minY), gesture.Max(p => p.z - minZ));
+        if (maxRange == 0) return gesture.Count;
+
+        var normalized = gesture.Select(p => new Vector3((p.x - minX) / maxRange, (p.y - minY) / maxRange, (p.z - minZ) / maxRange)).ToList();
+        var simplified = new List<Vector3>();
+        LineUtility.Simplify(normalized, SimplificationTolerance, simplified);
+        return simplified.Count;
+    }
+
+    public float Length()
+    {
+        float total = 0;
+        for (int i = 1; i < gesture.Count; i++)
+            total += (gesture[i] - gesture[i - 1]).magnitude;
+        return total;
+    }
+
+    public void Clear()
+    {
+        gesture.Clear();
+        timestamps.Clear();
+        foreach (var joint in validJoints)
+        {
+            jointPositions[joint.ToIndex()].Clear();
+            jointRotations[joint.ToIndex()].Clear();
+        }
+        lastWorldPoint = Vector3.zero;
+        isPinchActive = isGestureActive = isOutOfDistance = isOutOfRegion = false;
+        trailHandler.Clear();
+    }
+
+    public void Save(string dir)
+    {
+        SaveGestureCoordinates(dir);
+        SaveTimestamps(dir);
+        SaveJointData(dir);
+    }
+
+    private void SaveGestureCoordinates(string dir)
+    {
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "ex.txt")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(gesture.Count);
+            foreach (var point in gesture)
+            {
+                sw.WriteLine("####");
+                sw.WriteLine($"{point.x:0.#######},{point.y:0.#######},{point.z:0.#######}");
+            }
+        }
+    }
+
+    private void SaveTimestamps(string dir)
+    {
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "timestamps.csv")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(timestamps.Count);
+            foreach (var ts in timestamps)
+                sw.WriteLine(ts);
+        }
+    }
+
+    private void SaveJointData(string dir)
+    {
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "radius.csv")))
+        {
+            sw.WriteLine(dir);
+            foreach (var joint in validJoints)
+                sw.WriteLine($"{joint};{jointRadii[joint.ToIndex()]:0.#######}");
+        }
+
+        foreach (var joint in validJoints)
+        {
+            int idx = joint.ToIndex();
+            Directory.CreateDirectory(Path.Combine(experimentPath, dir, "position"));
+            using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "position", $"{joint}.csv")))
+            {
+                sw.WriteLine(dir);
+                sw.WriteLine(jointPositions[idx].Count);
+                foreach (var p in jointPositions[idx])
+                    sw.WriteLine($"{p.x:0.#######};{p.y:0.#######};{p.z:0.#######}");
+            }
+
+            Directory.CreateDirectory(Path.Combine(experimentPath, dir, "rotation"));
+            using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "rotation", $"{joint}.csv")))
+            {
+                sw.WriteLine(dir);
+                sw.WriteLine(jointRotations[idx].Count);
+                foreach (var q in jointRotations[idx])
+                    sw.WriteLine($"{q.x:0.#######};{q.y:0.#######};{q.z:0.#######};{q.w:0.#######}");
+            }
+        }
+    }
+
+    private bool TryRecordPosition(XRHandSubsystem subsystem)
+    {
+        long timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var indexTip = subsystem.rightHand.GetJoint(XRHandJointID.IndexTip);
+        var thumbTip = subsystem.rightHand.GetJoint(XRHandJointID.ThumbTip);
+
+        if (!indexTip.TryGetPose(out Pose indexPose) || !thumbTip.TryGetPose(out Pose thumbPose))
+            return false;
+
+        float distance = (indexPose.position - thumbPose.position).magnitude;
+        if (distance > PinchDisableDistanceThreshold || (isOutOfDistance && distanceTimer.ElapsedMilliseconds > DistanceToleranceMs) ||
+            (isOutOfRegion && regionTimer.ElapsedMilliseconds > RegionToleranceMs))
+            return false;
+
+        if (distance > PinchDistanceThreshold)
+        {
+            if (!isOutOfDistance)
+            {
+                feedbackSphere.GetComponent<Renderer>().material.color = Color.red;
+                isOutOfDistance = true;
+                distanceTimer.Restart();
+            }
+        }
+        else
+        {
+            isOutOfDistance = false;
+            if (!isOutOfRegion)
+                feedbackSphere.GetComponent<Renderer>().material.color = Color.green;
+        }
+
+        Vector3 worldPos = (indexPose.position + thumbPose.position) / 2f;
+        worldPos = Vector3.Lerp(lastWorldPoint != Vector3.zero ? lastWorldPoint : worldPos, worldPos, Time.deltaTime * SmoothingFactor);
+        feedbackSphere.transform.position = worldPos;
+
+        Vector3 localPos = regionTransform.InverseTransformPoint(worldPos);
+        localPos = Vector3.Lerp(gesture.DefaultIfEmpty(localPos).Last(), localPos, Time.deltaTime * SmoothingFactor);
+
+        if (regionBounds.Contains(localPos))
+            isOutOfRegion = false;
+        else if (!isOutOfRegion)
+        {
+            feedbackSphere.GetComponent<Renderer>().material.color = Color.red;
+            isOutOfRegion = true;
+            regionTimer.Restart();
+        }
+
+        lastWorldPoint = worldPos;
+        gesture.Add(localPos);
+        timestamps.Add(timestamp);
+        RecordJoints(subsystem);
+        trailHandler.DrawPoint(localPos);
+        return true;
+    }
+
+    private void RecordJoints(XRHandSubsystem subsystem)
+    {
+        foreach (var joint in validJoints)
+        {
+            int idx = joint.ToIndex();
+            var j = subsystem.rightHand.GetJoint(joint);
+            if (j.TryGetPose(out Pose pose))
+            {
+                Pose worldPose = regionTransform.InverseTransformPose(pose);
+                jointPositions[idx].Add(worldPose.position);
+                jointRotations[idx].Add(worldPose.rotation);
+            }
+            if (j.TryGetRadius(out float radius))
+                jointRadii[idx] = radius;
+        }
+    }
+}
+
+public class TrailHandler
+{
+    private const float SimplificationTolerance = 0.0002f;
+    private readonly LineRenderer lineRenderer;
+
+    public TrailHandler(LineRenderer lineRenderer) => this.lineRenderer = lineRenderer;
+
+    public void DrawPoint(Vector3 point)
+    {
+        lineRenderer.positionCount++;
+        lineRenderer.SetPosition(lineRenderer.positionCount - 1, point);
+        if (lineRenderer.positionCount > 1)
+            lineRenderer.Simplify(SimplificationTolerance);
+    }
+
+    public void Clear() => lineRenderer.positionCount = 0;
+}
