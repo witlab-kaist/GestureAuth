@@ -9,6 +9,7 @@ using TMPro;
 using UnityEngine.UI;
 using System.Diagnostics;
 using Unity.XR.CoreUtils;
+using System.Threading.Tasks;
 
 public class ExperimentManager : MonoBehaviour
 {
@@ -676,14 +677,19 @@ public class ExperimentManager : MonoBehaviour
 
 internal class InteractionHandler
 {
+    #region Constants
     private const long InteractionTimeThresholdMs = 500;
     private const float AlphaSpeed = 0.25f;
     private const float ExpansionSpeed = 0.02f;
+    #endregion
 
+    #region Properties
     public Action PromptUser { get; set; }
     public Action OnCube1Selected { get; set; }
     public Action OnCube2Selected { get; set; }
+    #endregion
 
+    #region Fields
     private readonly GameObject cube1;
     private readonly GameObject cube2;
     private readonly Stopwatch timer1 = new Stopwatch();
@@ -692,7 +698,9 @@ internal class InteractionHandler
     private bool isColliding2;
     private readonly Vector3 originalScale;
     private readonly Color originalColor;
+    #endregion
 
+    #region Constructor
     public InteractionHandler(GameObject cube1, GameObject cube2)
     {
         this.cube1 = cube1;
@@ -700,7 +708,9 @@ internal class InteractionHandler
         originalColor = cube1.GetComponent<Renderer>().material.color;
         originalScale = cube1.transform.localScale;
     }
+    #endregion
 
+    #region Methods
     public void OnUpdatedHandsPromptUser(XRHandSubsystem subsystem, XRHandSubsystem.UpdateSuccessFlags flags, XRHandSubsystem.UpdateType type)
     {
         PromptUser?.Invoke();
@@ -752,6 +762,7 @@ internal class InteractionHandler
         cube.GetComponent<Renderer>().material.color = originalColor;
         cube.transform.localScale = originalScale;
     }
+    #endregion
 }
 
 public class GestureHandler
@@ -768,12 +779,15 @@ public class GestureHandler
     private const long RegionToleranceMs = 1500;
     #endregion
 
-    #region Fields
+    #region Properties
+    public long DrawTimeMs => drawTimer.ElapsedMilliseconds;
     public Action OnGestureStarted { get; set; }
     public Action OnGestureFinished { get; set; }
     public Action OnGesturePassed { get; set; }
     public Action OnGestureFailed { get; set; }
+    #endregion
 
+    #region Fields
     private readonly string experimentPath;
     private readonly Transform regionTransform;
     private readonly TrailHandler trailHandler;
@@ -798,10 +812,7 @@ public class GestureHandler
     private bool isOutOfRegion;
     #endregion
 
-    #region Properties
-    public long DrawTimeMs => drawTimer.ElapsedMilliseconds;
-    #endregion
-
+    #region Constructor
     public GestureHandler(string experimentPath, Transform regionTransform, TrailHandler trailHandler, GameObject feedbackSphere)
     {
         this.experimentPath = experimentPath;
@@ -810,15 +821,17 @@ public class GestureHandler
         this.feedbackSphere = feedbackSphere;
 
         int jointCount = Enum.GetNames(typeof(XRHandJointID)).Length;
-        jointPositions = Enumerable.Repeat(new List<Vector3>(), jointCount).ToList();
-        jointRotations = Enumerable.Repeat(new List<Quaternion>(), jointCount).ToList();
+        jointPositions = Enumerable.Range(0, jointCount).Select(_ => new List<Vector3>()).ToList();
+        jointRotations = Enumerable.Range(0, jointCount).Select(_ => new List<Quaternion>()).ToList();
         jointRadii = Enumerable.Repeat(0f, jointCount).ToList();
 
         foreach (XRHandJointID joint in Enum.GetValues(typeof(XRHandJointID)).Cast<XRHandJointID>())
             if (joint != XRHandJointID.Invalid && joint != XRHandJointID.EndMarker)
                 validJoints.Add(joint);
     }
+    #endregion
 
+    #region Recorders
     public void OnUpdatedHandsRecord(XRHandSubsystem subsystem, XRHandSubsystem.UpdateSuccessFlags flags, XRHandSubsystem.UpdateType type)
     {
         float pinchStrength = MetaAimHand.right.pinchStrengthIndex.magnitude;
@@ -849,121 +862,6 @@ public class GestureHandler
 
             subsystem.updatedHands -= OnUpdatedHandsRecord;
             OnGestureFinished?.Invoke();
-        }
-    }
-
-    public double JackknifeScore(string sampleDir, string queryDir)
-    {
-        var dataset = new Jackknife.Evaluate.Dataset();
-        var blades = new Jackknife.JackknifeBlades();
-        Jackknife.Evaluate.Dataset.LoadSubjectDataset(dataset, experimentPath);
-        blades.SetIPDefaults();
-
-        var jackknife = new Jackknife.Jackknife(blades);
-        foreach (var sample in dataset.SamplesByGesture[dataset.Gestures.IndexOf(sampleDir)])
-            jackknife.AddTemplate(sample);
-
-        double score = 1 / jackknife.MatchScore(dataset.SamplesByGesture[dataset.Gestures.IndexOf(queryDir)][0]);
-        return score;
-    }
-
-    public int SimplificationScore()
-    {
-        if (gesture.Count == 0) return 0;
-
-        float minX = gesture.Min(p => p.x), minY = gesture.Min(p => p.y), minZ = gesture.Min(p => p.z);
-        float maxRange = Mathf.Max(gesture.Max(p => p.x - minX), gesture.Max(p => p.y - minY), gesture.Max(p => p.z - minZ));
-        if (maxRange == 0) return gesture.Count;
-
-        var normalized = gesture.Select(p => new Vector3((p.x - minX) / maxRange, (p.y - minY) / maxRange, (p.z - minZ) / maxRange)).ToList();
-        var simplified = new List<Vector3>();
-        LineUtility.Simplify(normalized, SimplificationTolerance, simplified);
-        return simplified.Count;
-    }
-
-    public float Length()
-    {
-        float total = 0;
-        for (int i = 1; i < gesture.Count; i++)
-            total += (gesture[i] - gesture[i - 1]).magnitude;
-        return total;
-    }
-
-    public void Clear()
-    {
-        gesture.Clear();
-        timestamps.Clear();
-        foreach (var joint in validJoints)
-        {
-            jointPositions[joint.ToIndex()].Clear();
-            jointRotations[joint.ToIndex()].Clear();
-        }
-        lastWorldPoint = Vector3.zero;
-        isPinchActive = isGestureActive = isOutOfDistance = isOutOfRegion = false;
-        trailHandler.Clear();
-    }
-
-    public void Save(string dir)
-    {
-        SaveGestureCoordinates(dir);
-        SaveTimestamps(dir);
-        SaveJointData(dir);
-    }
-
-    private void SaveGestureCoordinates(string dir)
-    {
-        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "ex.txt")))
-        {
-            sw.WriteLine(dir);
-            sw.WriteLine(gesture.Count);
-            foreach (var point in gesture)
-            {
-                sw.WriteLine("####");
-                sw.WriteLine($"{point.x:0.#######},{point.y:0.#######},{point.z:0.#######}");
-            }
-        }
-    }
-
-    private void SaveTimestamps(string dir)
-    {
-        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "timestamps.csv")))
-        {
-            sw.WriteLine(dir);
-            sw.WriteLine(timestamps.Count);
-            foreach (var ts in timestamps)
-                sw.WriteLine(ts);
-        }
-    }
-
-    private void SaveJointData(string dir)
-    {
-        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "radius.csv")))
-        {
-            sw.WriteLine(dir);
-            foreach (var joint in validJoints)
-                sw.WriteLine($"{joint};{jointRadii[joint.ToIndex()]:0.#######}");
-        }
-
-        foreach (var joint in validJoints)
-        {
-            int idx = joint.ToIndex();
-            Directory.CreateDirectory(Path.Combine(experimentPath, dir, "position"));
-            using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "position", $"{joint}.csv")))
-            {
-                sw.WriteLine(dir);
-                sw.WriteLine(jointPositions[idx].Count);
-                foreach (var p in jointPositions[idx])
-                    sw.WriteLine($"{p.x:0.#######};{p.y:0.#######};{p.z:0.#######}");
-            }
-
-            Directory.CreateDirectory(Path.Combine(experimentPath, dir, "rotation"));
-            using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "rotation", $"{joint}.csv")))
-            {
-                sw.WriteLine(dir);
-                sw.WriteLine(jointRotations[idx].Count);
-                foreach (var q in jointRotations[idx])
-                    sw.WriteLine($"{q.x:0.#######};{q.y:0.#######};{q.z:0.#######};{q.w:0.#######}");
-            }
         }
     }
 
@@ -1037,15 +935,155 @@ public class GestureHandler
                 jointRadii[idx] = radius;
         }
     }
+    #endregion
+
+    #region Helpers
+    public double JackknifeScore(string sampleDir, string queryDir)
+    {
+        var dataset = new Jackknife.Evaluate.Dataset();
+        var blades = new Jackknife.JackknifeBlades();
+        Jackknife.Evaluate.Dataset.LoadSubjectDataset(dataset, experimentPath);
+        blades.SetIPDefaults();
+
+        var jackknife = new Jackknife.Jackknife(blades);
+        foreach (var sample in dataset.SamplesByGesture[dataset.Gestures.IndexOf(sampleDir)])
+            jackknife.AddTemplate(sample);
+
+        double score = 1 / jackknife.MatchScore(dataset.SamplesByGesture[dataset.Gestures.IndexOf(queryDir)][0]);
+        return score;
+    }
+
+    public int SimplificationScore()
+    {
+        if (gesture.Count == 0) return 0;
+
+        float minX = gesture.Min(p => p.x), minY = gesture.Min(p => p.y), minZ = gesture.Min(p => p.z);
+        float maxRange = Mathf.Max(gesture.Max(p => p.x - minX), gesture.Max(p => p.y - minY), gesture.Max(p => p.z - minZ));
+        if (maxRange == 0) return gesture.Count;
+
+        var normalized = gesture.Select(p => new Vector3((p.x - minX) / maxRange, (p.y - minY) / maxRange, (p.z - minZ) / maxRange)).ToList();
+        var simplified = new List<Vector3>();
+        LineUtility.Simplify(normalized, SimplificationTolerance, simplified);
+        return simplified.Count;
+    }
+
+    public float Length()
+    {
+        float total = 0;
+        for (int i = 1; i < gesture.Count; i++)
+            total += (gesture[i] - gesture[i - 1]).magnitude;
+        return total;
+    }
+
+    public void Save(string dir)
+    {
+        SaveGestureCoordinates(dir);
+
+        List<long> timestampsCopy = new List<long>(timestamps);
+        Dictionary<XRHandJointID, List<Vector3>> jointPositionsCopy = validJoints.ToDictionary(
+            j => j,
+            j => new List<Vector3>(jointPositions[j.ToIndex()])
+        );
+        Dictionary<XRHandJointID, List<Quaternion>> jointRotationsCopy = validJoints.ToDictionary(
+            j => j,
+            j => new List<Quaternion>(jointRotations[j.ToIndex()])
+        );
+        List<float> jointRadiiCopy = new List<float>(jointRadii);
+
+        Task.Run(() => SaveTimestamps(dir, timestampsCopy));
+        Task.Run(() => SaveJointData(dir, jointPositionsCopy, jointRotationsCopy, jointRadiiCopy));
+    }
+
+    private void SaveGestureCoordinates(string dir)
+    {
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "ex.txt")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(gesture.Count);
+            foreach (var point in gesture)
+            {
+                sw.WriteLine("####");
+                sw.WriteLine($"{point.x:0.#######},{point.y:0.#######},{point.z:0.#######}");
+            }
+        }
+    }
+
+    private void SaveTimestamps(string dir, List<long> timestampsCopy)
+    {
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "timestamps.csv")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(timestampsCopy.Count);
+            foreach (var ts in timestampsCopy)
+                sw.WriteLine(ts);
+        }
+    }
+
+    private void SaveJointData(string dir, Dictionary<XRHandJointID, List<Vector3>> jointPositionsCopy,
+        Dictionary<XRHandJointID, List<Quaternion>> jointRotationsCopy, List<float> jointRadiiCopy)
+    {
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "radius.csv")))
+        {
+            sw.WriteLine(dir);
+            foreach (var joint in validJoints)
+                sw.WriteLine($"{joint};{jointRadiiCopy[joint.ToIndex()]:0.#######}");
+        }
+
+        foreach (var joint in validJoints)
+        {
+            int idx = joint.ToIndex();
+
+            Directory.CreateDirectory(Path.Combine(experimentPath, dir, "position"));
+            using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "position", $"{joint}.csv")))
+            {
+                sw.WriteLine(dir);
+                sw.WriteLine(jointPositionsCopy[joint].Count);
+                foreach (var p in jointPositionsCopy[joint])
+                    sw.WriteLine($"{p.x:0.#######};{p.y:0.#######};{p.z:0.#######}");
+            }
+
+            Directory.CreateDirectory(Path.Combine(experimentPath, dir, "rotation"));
+            using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "rotation", $"{joint}.csv")))
+            {
+                sw.WriteLine(dir);
+                sw.WriteLine(jointRotationsCopy[joint].Count);
+                foreach (var q in jointRotationsCopy[joint])
+                    sw.WriteLine($"{q.x:0.#######};{q.y:0.#######};{q.z:0.#######};{q.w:0.#######}");
+            }
+        }
+    }
+
+    public void Clear()
+    {
+        gesture.Clear();
+        timestamps.Clear();
+        foreach (var joint in validJoints)
+        {
+            jointPositions[joint.ToIndex()].Clear();
+            jointRotations[joint.ToIndex()].Clear();
+        }
+        lastWorldPoint = Vector3.zero;
+        isPinchActive = isGestureActive = isOutOfDistance = isOutOfRegion = false;
+        trailHandler.Clear();
+    }
+    #endregion
 }
 
 public class TrailHandler
 {
+    #region Constants
     private const float SimplificationTolerance = 0.0002f;
-    private readonly LineRenderer lineRenderer;
+    #endregion
 
+    #region Properties
     public TrailHandler(LineRenderer lineRenderer) => this.lineRenderer = lineRenderer;
+    #endregion
 
+    #region Fields
+    private readonly LineRenderer lineRenderer;
+    #endregion
+
+    #region Methods
     public void DrawPoint(Vector3 point)
     {
         lineRenderer.positionCount++;
@@ -1055,4 +1093,5 @@ public class TrailHandler
     }
 
     public void Clear() => lineRenderer.positionCount = 0;
+    #endregion
 }
