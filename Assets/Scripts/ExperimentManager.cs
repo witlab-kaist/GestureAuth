@@ -87,12 +87,21 @@ public class ExperimentManager : MonoBehaviour
     [SerializeField] private long distractTimeSeconds;
 
     [SerializeField] private LineRenderer gestureTrail;
+    [SerializeField] private LineRenderer xLine;
+    [SerializeField] private LineRenderer yLine;
+    [SerializeField] private LineRenderer zLine;
+    [SerializeField] private GameObject leftMark;
+    [SerializeField] private GameObject rightMark;
+    [SerializeField] private GameObject topMark;
+    [SerializeField] private GameObject baseMark;
+    [SerializeField] private GameObject frontMark;
+    [SerializeField] private GameObject backMark;
+    [SerializeField] private GameObject feedbackSphere;
     [SerializeField] private Transform mainCameraTransform;
     [SerializeField] private GameObject interactionCubeLeft;
     [SerializeField] private GameObject interactionCubeRight;
     [SerializeField] private GameObject interactionRegion;
     [SerializeField] private GameObject informationBoard;
-    [SerializeField] private GameObject feedbackSphere;
     [SerializeField] private LineRenderer tutorialLine;
     [SerializeField] private GameObject startPoint;
     [SerializeField] private GameObject endPoint;
@@ -158,7 +167,8 @@ public class ExperimentManager : MonoBehaviour
         if (createDirs.Length == 0) throw new DirectoryNotFoundException("No create directories found.");
         sampleDir = $"{FindLatestTimestamp(createDirs, @"(\d+)_create")}_create";
 
-        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), feedbackSphere);
+        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine),
+            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, backMark, feedbackSphere);
         TransitionToRecallSetup();
     }
 
@@ -171,7 +181,8 @@ public class ExperimentManager : MonoBehaviour
         if (!Directory.Exists(experimentPath))
             CreateExperimentDirectories();
 
-        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), feedbackSphere);
+        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine), 
+            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, backMark, feedbackSphere);
         currentTutorialStage = TutorialStage.AxisX;
         totalTimer.Start();
         TransitionToSetup();
@@ -591,8 +602,8 @@ public class ExperimentManager : MonoBehaviour
 
     private void PositionTutorialLine(Vector3 start, Vector3 end)
     {
-        startPoint.transform.position = interactionRegion.transform.TransformPoint(start);
-        endPoint.transform.position = interactionRegion.transform.TransformPoint(end);
+        startPoint.transform.localPosition = start;
+        endPoint.transform.localPosition = end;
         tutorialLine.SetPosition(0, start);
         tutorialLine.SetPosition(1, end);
     }
@@ -769,14 +780,15 @@ public class GestureHandler
 {
     #region Constants
     private const float PinchEntryThreshold = 0.9f;
-    private const float PinchDistanceThreshold = 0.03f;
-    private const float PinchDisableDistanceThreshold = 0.06f;
+    private const float PinchDistanceThreshold = 0.02f;
+    private const float PinchDisableDistanceThreshold = 0.04f;
     private const long PinchIgnoreTimeThresholdMs = 500;
     private const float GestureIgnoreLengthThreshold = 0.1f;
     private const float SmoothingFactor = 16f;
     private const float SimplificationTolerance = 0.13f;
     private const long DistanceToleranceMs = 1500;
     private const long RegionToleranceMs = 1500;
+    private const float RegionRadius = 0.5f;
     #endregion
 
     #region Properties
@@ -790,13 +802,22 @@ public class GestureHandler
     #region Fields
     private readonly string experimentPath;
     private readonly Transform regionTransform;
-    private readonly TrailHandler trailHandler;
+    private readonly TrailHandler gestureTrail;
+    private readonly TrailHandler xTrail;
+    private readonly TrailHandler yTrail;
+    private readonly TrailHandler zTrail;
+    private readonly GameObject leftMark;
+    private readonly GameObject rightMark;
+    private readonly GameObject topMark;
+    private readonly GameObject baseMark;
+    private readonly GameObject frontMark;
+    private readonly GameObject backMark;
     private readonly GameObject feedbackSphere;
     private readonly Bounds regionBounds = new Bounds(Vector3.zero, Vector3.one);
 
     private readonly List<Vector3> gesture = new List<Vector3>();
     private readonly List<long> timestamps = new List<long>();
-    private Vector3 lastWorldPoint;
+    //private Vector3 lastWorldPoint;
     private bool isPinchActive;
     private bool isGestureActive;
 
@@ -813,11 +834,22 @@ public class GestureHandler
     #endregion
 
     #region Constructor
-    public GestureHandler(string experimentPath, Transform regionTransform, TrailHandler trailHandler, GameObject feedbackSphere)
+    public GestureHandler(string experimentPath, Transform regionTransform, TrailHandler gestureTrail, TrailHandler xTrail, TrailHandler yTrail, 
+        TrailHandler zTrail, GameObject leftMark, GameObject rightMark, GameObject topMark, GameObject baseMark, GameObject frontMark, 
+        GameObject backMark, GameObject feedbackSphere)
     {
         this.experimentPath = experimentPath;
         this.regionTransform = regionTransform;
-        this.trailHandler = trailHandler;
+        this.gestureTrail = gestureTrail;
+        this.xTrail = xTrail;
+        this.yTrail = yTrail;
+        this.zTrail = zTrail;
+        this.leftMark = leftMark;
+        this.rightMark = rightMark;
+        this.topMark = topMark;
+        this.baseMark = baseMark;
+        this.frontMark = frontMark;
+        this.backMark = backMark;
         this.feedbackSphere = feedbackSphere;
 
         int jointCount = Enum.GetNames(typeof(XRHandJointID)).Length;
@@ -831,7 +863,7 @@ public class GestureHandler
     }
     #endregion
 
-    #region Recorders
+    #region Data Recording
     public void OnUpdatedHandsRecord(XRHandSubsystem subsystem, XRHandSubsystem.UpdateSuccessFlags flags, XRHandSubsystem.UpdateType type)
     {
         float pinchStrength = MetaAimHand.right.pinchStrengthIndex.magnitude;
@@ -840,6 +872,12 @@ public class GestureHandler
         if (pinchEntered)
         {
             isPinchActive = true;
+            leftMark.GetComponent<MeshRenderer>().enabled = true;
+            rightMark.GetComponent<MeshRenderer>().enabled = true;
+            topMark.GetComponent<MeshRenderer>().enabled = true;
+            baseMark.GetComponent<MeshRenderer>().enabled = true;
+            frontMark.GetComponent<MeshRenderer>().enabled = true;
+            backMark.GetComponent<MeshRenderer>().enabled = true;
             feedbackSphere.GetComponent<MeshRenderer>().enabled = true;
             if (TryRecordPosition(subsystem))
             {
@@ -852,7 +890,16 @@ public class GestureHandler
         if (isGestureActive && !TryRecordPosition(subsystem))
         {
             drawTimer.Stop();
+            leftMark.GetComponent<MeshRenderer>().enabled = false;
+            rightMark.GetComponent<MeshRenderer>().enabled = false;
+            topMark.GetComponent<MeshRenderer>().enabled = false;
+            baseMark.GetComponent<MeshRenderer>().enabled = false;
+            frontMark.GetComponent<MeshRenderer>().enabled = false;
+            backMark.GetComponent<MeshRenderer>().enabled = false;
             feedbackSphere.GetComponent<MeshRenderer>().enabled = false;
+            xTrail.Clear();
+            yTrail.Clear();
+            zTrail.Clear();
 
             if (drawTimer.ElapsedMilliseconds < PinchIgnoreTimeThresholdMs || Length() < GestureIgnoreLengthThreshold)
             {
@@ -896,10 +943,32 @@ public class GestureHandler
         }
 
         Vector3 worldPos = (indexPose.position + thumbPose.position) / 2f;
-        worldPos = Vector3.Lerp(lastWorldPoint != Vector3.zero ? lastWorldPoint : worldPos, worldPos, Time.deltaTime * SmoothingFactor);
-        feedbackSphere.transform.position = worldPos;
-
+        //worldPos = Vector3.Lerp(lastWorldPoint != Vector3.zero ? lastWorldPoint : worldPos, worldPos, Time.deltaTime * SmoothingFactor);
         Vector3 localPos = regionTransform.InverseTransformPoint(worldPos);
+
+        feedbackSphere.transform.localPosition = localPos;
+        leftMark.transform.localPosition = new Vector3(-RegionRadius, localPos.y, localPos.z);
+        rightMark.transform.localPosition = new Vector3(RegionRadius, localPos.y, localPos.z);
+        topMark.transform.localPosition = new Vector3(localPos.x, RegionRadius, localPos.z);
+        baseMark.transform.localPosition = new Vector3(localPos.x, -RegionRadius, localPos.z);
+        frontMark.transform.localPosition = new Vector3(localPos.x, localPos.y, -RegionRadius);
+        backMark.transform.localPosition = new Vector3(localPos.x, localPos.y, RegionRadius);
+        xTrail.DrawPoints(new[]
+        {
+            new Vector3(Math.Max(localPos.x, RegionRadius), localPos.y, localPos.z),
+            new Vector3(Math.Min(localPos.x, -RegionRadius), localPos.y, localPos.z)
+        });
+        yTrail.DrawPoints(new[]
+        {
+            new Vector3(localPos.x, Math.Max(localPos.y, RegionRadius), localPos.z),
+            new Vector3(localPos.x, Math.Min(localPos.y, -RegionRadius), localPos.z)
+        });
+        zTrail.DrawPoints(new[]
+{
+            new Vector3(localPos.x, localPos.y, Math.Max(localPos.z, RegionRadius)),
+            new Vector3(localPos.x, localPos.y, Math.Min(localPos.z, -RegionRadius))
+        });
+
         localPos = Vector3.Lerp(gesture.DefaultIfEmpty(localPos).Last(), localPos, Time.deltaTime * SmoothingFactor);
 
         if (regionBounds.Contains(localPos))
@@ -911,11 +980,11 @@ public class GestureHandler
             regionTimer.Restart();
         }
 
-        lastWorldPoint = worldPos;
+        //lastWorldPoint = worldPos;
         gesture.Add(localPos);
         timestamps.Add(timestamp);
         RecordJoints(subsystem);
-        trailHandler.DrawPoint(localPos);
+        gestureTrail.DrawPoint(localPos);
         return true;
     }
 
@@ -937,44 +1006,7 @@ public class GestureHandler
     }
     #endregion
 
-    #region Helpers
-    public double JackknifeScore(string sampleDir, string queryDir)
-    {
-        var dataset = new Jackknife.Evaluate.Dataset();
-        var blades = new Jackknife.JackknifeBlades();
-        Jackknife.Evaluate.Dataset.LoadSubjectDataset(dataset, experimentPath);
-        blades.SetIPDefaults();
-
-        var jackknife = new Jackknife.Jackknife(blades);
-        foreach (var sample in dataset.SamplesByGesture[dataset.Gestures.IndexOf(sampleDir)])
-            jackknife.AddTemplate(sample);
-
-        double score = 1 / jackknife.MatchScore(dataset.SamplesByGesture[dataset.Gestures.IndexOf(queryDir)][0]);
-        return score;
-    }
-
-    public int SimplificationScore()
-    {
-        if (gesture.Count == 0) return 0;
-
-        float minX = gesture.Min(p => p.x), minY = gesture.Min(p => p.y), minZ = gesture.Min(p => p.z);
-        float maxRange = Mathf.Max(gesture.Max(p => p.x - minX), gesture.Max(p => p.y - minY), gesture.Max(p => p.z - minZ));
-        if (maxRange == 0) return gesture.Count;
-
-        var normalized = gesture.Select(p => new Vector3((p.x - minX) / maxRange, (p.y - minY) / maxRange, (p.z - minZ) / maxRange)).ToList();
-        var simplified = new List<Vector3>();
-        LineUtility.Simplify(normalized, SimplificationTolerance, simplified);
-        return simplified.Count;
-    }
-
-    public float Length()
-    {
-        float total = 0;
-        for (int i = 1; i < gesture.Count; i++)
-            total += (gesture[i] - gesture[i - 1]).magnitude;
-        return total;
-    }
-
+    #region Data Saving
     public void Save(string dir)
     {
         SaveGestureCoordinates(dir);
@@ -1052,6 +1084,45 @@ public class GestureHandler
             }
         }
     }
+    #endregion
+
+    #region Helpers
+    public double JackknifeScore(string sampleDir, string queryDir)
+    {
+        var dataset = new Jackknife.Evaluate.Dataset();
+        var blades = new Jackknife.JackknifeBlades();
+        Jackknife.Evaluate.Dataset.LoadSubjectDataset(dataset, experimentPath);
+        blades.SetIPDefaults();
+
+        var jackknife = new Jackknife.Jackknife(blades);
+        foreach (var sample in dataset.SamplesByGesture[dataset.Gestures.IndexOf(sampleDir)])
+            jackknife.AddTemplate(sample);
+
+        double score = 1 / jackknife.MatchScore(dataset.SamplesByGesture[dataset.Gestures.IndexOf(queryDir)][0]);
+        return score;
+    }
+
+    public int SimplificationScore()
+    {
+        if (gesture.Count == 0) return 0;
+
+        float minX = gesture.Min(p => p.x), minY = gesture.Min(p => p.y), minZ = gesture.Min(p => p.z);
+        float maxRange = Mathf.Max(gesture.Max(p => p.x - minX), gesture.Max(p => p.y - minY), gesture.Max(p => p.z - minZ));
+        if (maxRange == 0) return gesture.Count;
+
+        var normalized = gesture.Select(p => new Vector3((p.x - minX) / maxRange, (p.y - minY) / maxRange, (p.z - minZ) / maxRange)).ToList();
+        var simplified = new List<Vector3>();
+        LineUtility.Simplify(normalized, SimplificationTolerance, simplified);
+        return simplified.Count;
+    }
+
+    public float Length()
+    {
+        float total = 0;
+        for (int i = 1; i < gesture.Count; i++)
+            total += (gesture[i] - gesture[i - 1]).magnitude;
+        return total;
+    }
 
     public void Clear()
     {
@@ -1062,9 +1133,9 @@ public class GestureHandler
             jointPositions[joint.ToIndex()].Clear();
             jointRotations[joint.ToIndex()].Clear();
         }
-        lastWorldPoint = Vector3.zero;
+        //lastWorldPoint = Vector3.zero;
         isPinchActive = isGestureActive = isOutOfDistance = isOutOfRegion = false;
-        trailHandler.Clear();
+        gestureTrail.Clear();
     }
     #endregion
 }
@@ -1075,12 +1146,15 @@ public class TrailHandler
     private const float SimplificationTolerance = 0.0002f;
     #endregion
 
-    #region Properties
-    public TrailHandler(LineRenderer lineRenderer) => this.lineRenderer = lineRenderer;
-    #endregion
-
     #region Fields
     private readonly LineRenderer lineRenderer;
+    #endregion
+
+    #region Constructor
+    public TrailHandler(LineRenderer lineRenderer)
+    {
+        this.lineRenderer = lineRenderer;
+    }
     #endregion
 
     #region Methods
@@ -1092,6 +1166,18 @@ public class TrailHandler
             lineRenderer.Simplify(SimplificationTolerance);
     }
 
-    public void Clear() => lineRenderer.positionCount = 0;
+    public void DrawPoints(Vector3[] points)
+    {
+        lineRenderer.positionCount = points.Length;
+        for (int i = 0; i < points.Length; i++)
+            lineRenderer.SetPosition(i, points[i]);
+        if (lineRenderer.positionCount > 1)
+            lineRenderer.Simplify(SimplificationTolerance);
+    }
+
+    public void Clear()
+    {
+        lineRenderer.positionCount = 0;
+    }
     #endregion
 }
