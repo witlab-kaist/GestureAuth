@@ -167,7 +167,7 @@ public class ExperimentManager : MonoBehaviour
         if (createDirs.Length == 0) throw new DirectoryNotFoundException("No create directories found.");
         sampleDir = $"{FindLatestTimestamp(createDirs, @"(\d+)_create")}_create";
 
-        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine),
+        gestureHandler = new GestureHandler(experimentPath, mainCameraTransform, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine),
             new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, backMark, feedbackSphere);
         TransitionToRecallSetup();
     }
@@ -181,7 +181,7 @@ public class ExperimentManager : MonoBehaviour
         if (!Directory.Exists(experimentPath))
             CreateExperimentDirectories();
 
-        gestureHandler = new GestureHandler(experimentPath, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine), 
+        gestureHandler = new GestureHandler(experimentPath, mainCameraTransform, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine), 
             new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, backMark, feedbackSphere);
         currentTutorialStage = TutorialStage.AxisX;
         totalTimer.Start();
@@ -802,6 +802,8 @@ public class GestureHandler
     #region Fields
     private readonly string experimentPath;
     private readonly Transform regionTransform;
+    private readonly Bounds regionBounds = new Bounds(Vector3.zero, Vector3.one);
+
     private readonly TrailHandler gestureTrail;
     private readonly TrailHandler xTrail;
     private readonly TrailHandler yTrail;
@@ -813,7 +815,10 @@ public class GestureHandler
     private readonly GameObject frontMark;
     private readonly GameObject backMark;
     private readonly GameObject feedbackSphere;
-    private readonly Bounds regionBounds = new Bounds(Vector3.zero, Vector3.one);
+
+    private readonly Transform mainCameraTransform;
+    private readonly List<Vector3> headsetPositions = new List<Vector3>();
+    private readonly List<Quaternion> headsetRotations = new List<Quaternion>();
 
     private readonly List<Vector3> gesture = new List<Vector3>();
     private readonly List<long> timestamps = new List<long>();
@@ -834,11 +839,12 @@ public class GestureHandler
     #endregion
 
     #region Constructor
-    public GestureHandler(string experimentPath, Transform regionTransform, TrailHandler gestureTrail, TrailHandler xTrail, TrailHandler yTrail, 
-        TrailHandler zTrail, GameObject leftMark, GameObject rightMark, GameObject topMark, GameObject baseMark, GameObject frontMark, 
+    public GestureHandler(string experimentPath, Transform mainCameraTransform, Transform regionTransform, TrailHandler gestureTrail, TrailHandler xTrail, 
+        TrailHandler yTrail, TrailHandler zTrail, GameObject leftMark, GameObject rightMark, GameObject topMark, GameObject baseMark, GameObject frontMark, 
         GameObject backMark, GameObject feedbackSphere)
     {
         this.experimentPath = experimentPath;
+        this.mainCameraTransform = mainCameraTransform;
         this.regionTransform = regionTransform;
         this.gestureTrail = gestureTrail;
         this.xTrail = xTrail;
@@ -942,36 +948,39 @@ public class GestureHandler
                 feedbackSphere.GetComponent<Renderer>().material.color = Color.green;
         }
 
-        Vector3 worldPos = (indexPose.position + thumbPose.position) / 2f;
+        Vector3 worldGesturePos = (indexPose.position + thumbPose.position) / 2f;
         //worldPos = Vector3.Lerp(lastWorldPoint != Vector3.zero ? lastWorldPoint : worldPos, worldPos, Time.deltaTime * SmoothingFactor);
-        Vector3 localPos = regionTransform.InverseTransformPoint(worldPos);
+        Vector3 localGesturePos = regionTransform.InverseTransformPoint(worldGesturePos);
 
-        feedbackSphere.transform.localPosition = localPos;
-        leftMark.transform.localPosition = new Vector3(-RegionRadius, localPos.y, localPos.z);
-        rightMark.transform.localPosition = new Vector3(RegionRadius, localPos.y, localPos.z);
-        topMark.transform.localPosition = new Vector3(localPos.x, RegionRadius, localPos.z);
-        baseMark.transform.localPosition = new Vector3(localPos.x, -RegionRadius, localPos.z);
-        frontMark.transform.localPosition = new Vector3(localPos.x, localPos.y, -RegionRadius);
-        backMark.transform.localPosition = new Vector3(localPos.x, localPos.y, RegionRadius);
+        Vector3 localHeadsetPos = regionTransform.InverseTransformPoint(mainCameraTransform.position);
+        Quaternion localHeadsetRot = Quaternion.Inverse(regionTransform.rotation) * mainCameraTransform.rotation;
+
+        feedbackSphere.transform.localPosition = localGesturePos;
+        leftMark.transform.localPosition = new Vector3(-RegionRadius, localGesturePos.y, localGesturePos.z);
+        rightMark.transform.localPosition = new Vector3(RegionRadius, localGesturePos.y, localGesturePos.z);
+        topMark.transform.localPosition = new Vector3(localGesturePos.x, RegionRadius, localGesturePos.z);
+        baseMark.transform.localPosition = new Vector3(localGesturePos.x, -RegionRadius, localGesturePos.z);
+        frontMark.transform.localPosition = new Vector3(localGesturePos.x, localGesturePos.y, -RegionRadius);
+        backMark.transform.localPosition = new Vector3(localGesturePos.x, localGesturePos.y, RegionRadius);
         xTrail.DrawPoints(new[]
         {
-            new Vector3(Math.Max(localPos.x, RegionRadius), localPos.y, localPos.z),
-            new Vector3(Math.Min(localPos.x, -RegionRadius), localPos.y, localPos.z)
+            new Vector3(Math.Max(localGesturePos.x, RegionRadius), localGesturePos.y, localGesturePos.z),
+            new Vector3(Math.Min(localGesturePos.x, -RegionRadius), localGesturePos.y, localGesturePos.z)
         });
         yTrail.DrawPoints(new[]
         {
-            new Vector3(localPos.x, Math.Max(localPos.y, RegionRadius), localPos.z),
-            new Vector3(localPos.x, Math.Min(localPos.y, -RegionRadius), localPos.z)
+            new Vector3(localGesturePos.x, Math.Max(localGesturePos.y, RegionRadius), localGesturePos.z),
+            new Vector3(localGesturePos.x, Math.Min(localGesturePos.y, -RegionRadius), localGesturePos.z)
         });
         zTrail.DrawPoints(new[]
 {
-            new Vector3(localPos.x, localPos.y, Math.Max(localPos.z, RegionRadius)),
-            new Vector3(localPos.x, localPos.y, Math.Min(localPos.z, -RegionRadius))
+            new Vector3(localGesturePos.x, localGesturePos.y, Math.Max(localGesturePos.z, RegionRadius)),
+            new Vector3(localGesturePos.x, localGesturePos.y, Math.Min(localGesturePos.z, -RegionRadius))
         });
 
-        localPos = Vector3.Lerp(gesture.DefaultIfEmpty(localPos).Last(), localPos, Time.deltaTime * SmoothingFactor);
+        localGesturePos = Vector3.Lerp(gesture.DefaultIfEmpty(localGesturePos).Last(), localGesturePos, Time.deltaTime * SmoothingFactor);
 
-        if (regionBounds.Contains(localPos))
+        if (regionBounds.Contains(localGesturePos))
             isOutOfRegion = false;
         else if (!isOutOfRegion)
         {
@@ -981,10 +990,12 @@ public class GestureHandler
         }
 
         //lastWorldPoint = worldPos;
-        gesture.Add(localPos);
+        gesture.Add(localGesturePos);
         timestamps.Add(timestamp);
+        headsetPositions.Add(localHeadsetPos);
+        headsetRotations.Add(localHeadsetRot);
         RecordJoints(subsystem);
-        gestureTrail.DrawPoint(localPos);
+        gestureTrail.DrawPoint(localGesturePos);
         return true;
     }
 
@@ -1021,8 +1032,11 @@ public class GestureHandler
             j => new List<Quaternion>(jointRotations[j.ToIndex()])
         );
         List<float> jointRadiiCopy = new List<float>(jointRadii);
+        List<Vector3> headsetPositionsCopy = new List<Vector3>(headsetPositions);
+        List<Quaternion> headsetRotationsCopy = new List<Quaternion>(headsetRotations);
 
         Task.Run(() => SaveTimestamps(dir, timestampsCopy));
+        Task.Run(() => SaveHeadsetData(dir, headsetPositionsCopy, headsetRotationsCopy));
         Task.Run(() => SaveJointData(dir, jointPositionsCopy, jointRotationsCopy, jointRadiiCopy));
     }
 
@@ -1048,6 +1062,25 @@ public class GestureHandler
             sw.WriteLine(timestampsCopy.Count);
             foreach (var ts in timestampsCopy)
                 sw.WriteLine(ts);
+        }
+    }
+
+    private void SaveHeadsetData(string dir, List<Vector3> headsetPositionsCopy, List<Quaternion> headsetRotationsCopy)
+    {
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset_positions.csv")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(headsetPositionsCopy.Count);
+            foreach (var p in headsetPositionsCopy)
+                sw.WriteLine($"{p.x:0.#######};{p.y:0.#######};{p.z:0.#######}");
+        }
+
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset_rotations.csv")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(headsetRotationsCopy.Count);
+            foreach (var q in headsetRotationsCopy)
+                sw.WriteLine($"{q.x:0.#######};{q.y:0.#######};{q.z:0.#######};{q.w:0.#######}");
         }
     }
 
@@ -1128,6 +1161,8 @@ public class GestureHandler
     {
         gesture.Clear();
         timestamps.Clear();
+        headsetPositions.Clear();
+        headsetRotations.Clear();
         foreach (var joint in validJoints)
         {
             jointPositions[joint.ToIndex()].Clear();
