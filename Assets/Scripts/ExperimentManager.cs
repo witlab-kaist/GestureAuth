@@ -56,27 +56,22 @@ public class ExperimentManager : MonoBehaviour
     #region Fields
     private ExperimentStage currentStage;
     private TutorialStage currentTutorialStage;
-    private string experimentPath;
-    private string logPath;
-    private string sampleDir;
-    private string queryDir;
+    private string experimentPath, logPath;
+    private string sampleDir, queryDir;
 
     private XRHandSubsystem handSubsystem;
     private GestureHandler gestureHandler;
     private InteractionHandler interactionHandler;
 
     private GameObject localCoordinateFrame;
-    private uint currentPracticeAttempt;
-    private uint currentRecallAttempt;
-    private bool isDistractFinished;
-    private bool isRecallSuccessful;
+    private uint currentPracticeAttempt, currentRecallAttempt;
+    private bool isDistractFinished, isRecallSuccessful;
 
     private readonly Stopwatch totalTimer = new Stopwatch();
     private readonly Stopwatch stageTimer = new Stopwatch();
     private readonly Stopwatch feedbackTimer = new Stopwatch();
     private readonly Stopwatch distractTimer = new Stopwatch();
-    private bool isStageActive;
-    private bool isFeedbackActive;
+    private bool isStageActive, isFeedbackActive;
     #endregion
 
     #region Serialized Fields
@@ -95,7 +90,6 @@ public class ExperimentManager : MonoBehaviour
     [SerializeField] private GameObject topMark;
     [SerializeField] private GameObject baseMark;
     [SerializeField] private GameObject frontMark;
-    [SerializeField] private GameObject backMark;
     [SerializeField] private GameObject feedbackSphere;
     [SerializeField] private Transform mainCameraTransform;
     [SerializeField] private GameObject interactionCubeLeft;
@@ -168,7 +162,7 @@ public class ExperimentManager : MonoBehaviour
         sampleDir = $"{FindLatestTimestamp(createDirs, @"(\d+)_create")}_create";
 
         gestureHandler = new GestureHandler(experimentPath, mainCameraTransform, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine),
-            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, backMark, feedbackSphere);
+            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, feedbackSphere);
         TransitionToRecallSetup();
     }
 
@@ -182,7 +176,7 @@ public class ExperimentManager : MonoBehaviour
             CreateExperimentDirectories();
 
         gestureHandler = new GestureHandler(experimentPath, mainCameraTransform, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine), 
-            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, backMark, feedbackSphere);
+            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, feedbackSphere);
         currentTutorialStage = TutorialStage.AxisX;
         totalTimer.Start();
         TransitionToSetup();
@@ -701,12 +695,10 @@ internal class InteractionHandler
     #endregion
 
     #region Fields
-    private readonly GameObject cube1;
-    private readonly GameObject cube2;
+    private readonly GameObject cube1, cube2;
     private readonly Stopwatch timer1 = new Stopwatch();
     private readonly Stopwatch timer2 = new Stopwatch();
-    private bool isColliding1;
-    private bool isColliding2;
+    private bool isColliding1, isColliding2;
     private readonly Vector3 originalScale;
     private readonly Color originalColor;
     #endregion
@@ -776,7 +768,7 @@ internal class InteractionHandler
     #endregion
 }
 
-public class GestureHandler
+internal class GestureHandler
 {
     #region Constants
     private const float PinchEntryThreshold = 0.9f;
@@ -784,11 +776,9 @@ public class GestureHandler
     private const float PinchDisableDistanceThreshold = 0.04f;
     private const long PinchIgnoreTimeThresholdMs = 500;
     private const float GestureIgnoreLengthThreshold = 0.1f;
-    private const float SmoothingFactor = 16f;
     private const float SimplificationTolerance = 0.13f;
     private const long DistanceToleranceMs = 1500;
     private const long RegionToleranceMs = 1500;
-    private const float RegionRadius = 0.5f;
     #endregion
 
     #region Properties
@@ -801,20 +791,12 @@ public class GestureHandler
 
     #region Fields
     private readonly string experimentPath;
+
     private readonly Transform regionTransform;
     private readonly Bounds regionBounds = new Bounds(Vector3.zero, Vector3.one);
 
     private readonly TrailHandler gestureTrail;
-    private readonly TrailHandler xTrail;
-    private readonly TrailHandler yTrail;
-    private readonly TrailHandler zTrail;
-    private readonly GameObject leftMark;
-    private readonly GameObject rightMark;
-    private readonly GameObject topMark;
-    private readonly GameObject baseMark;
-    private readonly GameObject frontMark;
-    private readonly GameObject backMark;
-    private readonly GameObject feedbackSphere;
+    private readonly VisualFeedbackHandler visualFeedbackHandler;
 
     private readonly Transform mainCameraTransform;
     private readonly List<Vector3> headsetPositions = new List<Vector3>();
@@ -822,8 +804,6 @@ public class GestureHandler
 
     private readonly List<Vector3> gesture = new List<Vector3>();
     private readonly List<long> timestamps = new List<long>();
-    //private Vector3 lastWorldPoint;
-    private bool isPinchActive;
     private bool isGestureActive;
 
     private readonly HashSet<XRHandJointID> validJoints = new HashSet<XRHandJointID>();
@@ -834,29 +814,21 @@ public class GestureHandler
     private readonly Stopwatch drawTimer = new Stopwatch();
     private readonly Stopwatch distanceTimer = new Stopwatch();
     private readonly Stopwatch regionTimer = new Stopwatch();
-    private bool isOutOfDistance;
-    private bool isOutOfRegion;
+    private bool isOutOfDistance, isOutOfRegion;
     #endregion
 
     #region Constructor
     public GestureHandler(string experimentPath, Transform mainCameraTransform, Transform regionTransform, TrailHandler gestureTrail, TrailHandler xTrail, 
         TrailHandler yTrail, TrailHandler zTrail, GameObject leftMark, GameObject rightMark, GameObject topMark, GameObject baseMark, GameObject frontMark, 
-        GameObject backMark, GameObject feedbackSphere)
+        GameObject feedbackSphere)
     {
         this.experimentPath = experimentPath;
         this.mainCameraTransform = mainCameraTransform;
         this.regionTransform = regionTransform;
         this.gestureTrail = gestureTrail;
-        this.xTrail = xTrail;
-        this.yTrail = yTrail;
-        this.zTrail = zTrail;
-        this.leftMark = leftMark;
-        this.rightMark = rightMark;
-        this.topMark = topMark;
-        this.baseMark = baseMark;
-        this.frontMark = frontMark;
-        this.backMark = backMark;
-        this.feedbackSphere = feedbackSphere;
+
+        visualFeedbackHandler = new VisualFeedbackHandler(feedbackSphere, leftMark, rightMark, topMark, baseMark, frontMark, gestureTrail,
+            xTrail, yTrail, zTrail, regionTransform);
 
         int jointCount = Enum.GetNames(typeof(XRHandJointID)).Length;
         jointPositions = Enumerable.Range(0, jointCount).Select(_ => new List<Vector3>()).ToList();
@@ -873,20 +845,13 @@ public class GestureHandler
     public void OnUpdatedHandsRecord(XRHandSubsystem subsystem, XRHandSubsystem.UpdateSuccessFlags flags, XRHandSubsystem.UpdateType type)
     {
         float pinchStrength = MetaAimHand.right.pinchStrengthIndex.magnitude;
-        bool pinchEntered = !isPinchActive && pinchStrength >= PinchEntryThreshold;
+        bool pinchEntered = !isGestureActive && pinchStrength >= PinchEntryThreshold;
 
         if (pinchEntered)
         {
-            isPinchActive = true;
-            leftMark.GetComponent<MeshRenderer>().enabled = true;
-            rightMark.GetComponent<MeshRenderer>().enabled = true;
-            topMark.GetComponent<MeshRenderer>().enabled = true;
-            baseMark.GetComponent<MeshRenderer>().enabled = true;
-            frontMark.GetComponent<MeshRenderer>().enabled = true;
-            backMark.GetComponent<MeshRenderer>().enabled = true;
-            feedbackSphere.GetComponent<MeshRenderer>().enabled = true;
             if (TryRecordPosition(subsystem))
             {
+                visualFeedbackHandler.ShowFeedback();
                 OnGestureStarted?.Invoke();
                 drawTimer.Restart();
                 isGestureActive = true;
@@ -896,16 +861,8 @@ public class GestureHandler
         if (isGestureActive && !TryRecordPosition(subsystem))
         {
             drawTimer.Stop();
-            leftMark.GetComponent<MeshRenderer>().enabled = false;
-            rightMark.GetComponent<MeshRenderer>().enabled = false;
-            topMark.GetComponent<MeshRenderer>().enabled = false;
-            baseMark.GetComponent<MeshRenderer>().enabled = false;
-            frontMark.GetComponent<MeshRenderer>().enabled = false;
-            backMark.GetComponent<MeshRenderer>().enabled = false;
-            feedbackSphere.GetComponent<MeshRenderer>().enabled = false;
-            xTrail.Clear();
-            yTrail.Clear();
-            zTrail.Clear();
+            visualFeedbackHandler.HideFeedback();
+            isGestureActive = isOutOfDistance = isOutOfRegion = false;
 
             if (drawTimer.ElapsedMilliseconds < PinchIgnoreTimeThresholdMs || Length() < GestureIgnoreLengthThreshold)
             {
@@ -936,7 +893,6 @@ public class GestureHandler
         {
             if (!isOutOfDistance)
             {
-                feedbackSphere.GetComponent<Renderer>().material.color = Color.red;
                 isOutOfDistance = true;
                 distanceTimer.Restart();
             }
@@ -944,58 +900,35 @@ public class GestureHandler
         else
         {
             isOutOfDistance = false;
-            if (!isOutOfRegion)
-                feedbackSphere.GetComponent<Renderer>().material.color = Color.green;
         }
 
         Vector3 worldGesturePos = (indexPose.position + thumbPose.position) / 2f;
-        //worldPos = Vector3.Lerp(lastWorldPoint != Vector3.zero ? lastWorldPoint : worldPos, worldPos, Time.deltaTime * SmoothingFactor);
         Vector3 localGesturePos = regionTransform.InverseTransformPoint(worldGesturePos);
 
         Vector3 localHeadsetPos = regionTransform.InverseTransformPoint(mainCameraTransform.position);
-        Quaternion localHeadsetRot = Quaternion.Inverse(regionTransform.rotation) * mainCameraTransform.rotation;
+        Quaternion localHeadsetRot = Quaternion.Inverse(regionTransform.rotation) * mainCameraTransform.rotation;  
 
-        feedbackSphere.transform.localPosition = localGesturePos;
-        leftMark.transform.localPosition = new Vector3(-RegionRadius, localGesturePos.y, localGesturePos.z);
-        rightMark.transform.localPosition = new Vector3(RegionRadius, localGesturePos.y, localGesturePos.z);
-        topMark.transform.localPosition = new Vector3(localGesturePos.x, RegionRadius, localGesturePos.z);
-        baseMark.transform.localPosition = new Vector3(localGesturePos.x, -RegionRadius, localGesturePos.z);
-        frontMark.transform.localPosition = new Vector3(localGesturePos.x, localGesturePos.y, -RegionRadius);
-        backMark.transform.localPosition = new Vector3(localGesturePos.x, localGesturePos.y, RegionRadius);
-        xTrail.DrawPoints(new[]
+        if (!regionBounds.Contains(localGesturePos))
         {
-            new Vector3(Math.Max(localGesturePos.x, RegionRadius), localGesturePos.y, localGesturePos.z),
-            new Vector3(Math.Min(localGesturePos.x, -RegionRadius), localGesturePos.y, localGesturePos.z)
-        });
-        yTrail.DrawPoints(new[]
+            if (!isOutOfRegion)
+            {
+                isOutOfRegion = true;
+                regionTimer.Restart();
+            }
+        }
+        else
         {
-            new Vector3(localGesturePos.x, Math.Max(localGesturePos.y, RegionRadius), localGesturePos.z),
-            new Vector3(localGesturePos.x, Math.Min(localGesturePos.y, -RegionRadius), localGesturePos.z)
-        });
-        zTrail.DrawPoints(new[]
-{
-            new Vector3(localGesturePos.x, localGesturePos.y, Math.Max(localGesturePos.z, RegionRadius)),
-            new Vector3(localGesturePos.x, localGesturePos.y, Math.Min(localGesturePos.z, -RegionRadius))
-        });
-
-        localGesturePos = Vector3.Lerp(gesture.DefaultIfEmpty(localGesturePos).Last(), localGesturePos, Time.deltaTime * SmoothingFactor);
-
-        if (regionBounds.Contains(localGesturePos))
             isOutOfRegion = false;
-        else if (!isOutOfRegion)
-        {
-            feedbackSphere.GetComponent<Renderer>().material.color = Color.red;
-            isOutOfRegion = true;
-            regionTimer.Restart();
         }
 
-        //lastWorldPoint = worldPos;
         gesture.Add(localGesturePos);
         timestamps.Add(timestamp);
         headsetPositions.Add(localHeadsetPos);
         headsetRotations.Add(localHeadsetRot);
         RecordJoints(subsystem);
-        gestureTrail.DrawPoint(localGesturePos);
+
+        visualFeedbackHandler.UpdateFeedback(localGesturePos, isOutOfDistance, isOutOfRegion);
+
         return true;
     }
 
@@ -1168,14 +1101,106 @@ public class GestureHandler
             jointPositions[joint.ToIndex()].Clear();
             jointRotations[joint.ToIndex()].Clear();
         }
-        //lastWorldPoint = Vector3.zero;
-        isPinchActive = isGestureActive = isOutOfDistance = isOutOfRegion = false;
         gestureTrail.Clear();
     }
     #endregion
 }
 
-public class TrailHandler
+internal class VisualFeedbackHandler
+{
+    #region Constants
+    private const float SmoothingFactor = 32f; //16f;
+    private const float RegionRadius = 0.5f;
+    #endregion
+
+    #region Fields
+    private readonly GameObject feedbackSphere;
+    private readonly GameObject leftMark, rightMark, topMark, baseMark, frontMark;
+    private readonly TrailHandler gestureTrail;
+    private readonly TrailHandler xTrail, yTrail, zTrail;
+
+    private readonly Renderer feedbackSphereRenderer;
+    private readonly MeshRenderer[] markRenderers;
+
+    private Vector3 lastLocalGesturePos;
+    #endregion
+
+    #region Constructor
+    public VisualFeedbackHandler(GameObject feedbackSphere, GameObject leftMark, GameObject rightMark, GameObject topMark, GameObject baseMark, 
+        GameObject frontMark, TrailHandler gestureTrail, TrailHandler xTrail, TrailHandler yTrail, TrailHandler zTrail, Transform regionTransform)
+    {
+        this.feedbackSphere = feedbackSphere;
+        feedbackSphereRenderer = feedbackSphere.GetComponent<Renderer>();
+        markRenderers = new[]
+        {
+            leftMark.GetComponent<MeshRenderer>(),
+            rightMark.GetComponent<MeshRenderer>(),
+            topMark.GetComponent<MeshRenderer>(),
+            baseMark.GetComponent<MeshRenderer>(),
+            frontMark.GetComponent<MeshRenderer>()
+        };
+        this.leftMark = leftMark;
+        this.rightMark = rightMark;
+        this.topMark = topMark;
+        this.baseMark = baseMark;
+        this.frontMark = frontMark;
+        this.gestureTrail = gestureTrail;
+        this.xTrail = xTrail;
+        this.yTrail = yTrail;
+        this.zTrail = zTrail;
+    }
+    #endregion
+
+    #region Methods
+    public void UpdateFeedback(Vector3 localGesturePos, bool isOutOfDistance, bool isOutOfRegion)
+    {
+        feedbackSphere.transform.localPosition = localGesturePos;
+        feedbackSphereRenderer.material.color = (isOutOfDistance || isOutOfRegion) ? Color.red : Color.green;
+
+        leftMark.transform.localPosition = new Vector3(-RegionRadius, localGesturePos.y, localGesturePos.z);
+        rightMark.transform.localPosition = new Vector3(RegionRadius, localGesturePos.y, localGesturePos.z);
+        topMark.transform.localPosition = new Vector3(localGesturePos.x, RegionRadius, localGesturePos.z);
+        baseMark.transform.localPosition = new Vector3(localGesturePos.x, -RegionRadius, localGesturePos.z);
+        frontMark.transform.localPosition = new Vector3(localGesturePos.x, localGesturePos.y, RegionRadius);
+
+        xTrail.UpdateTwoPoints(
+            new Vector3(Math.Max(localGesturePos.x, RegionRadius), localGesturePos.y, localGesturePos.z),
+            new Vector3(Math.Min(localGesturePos.x, -RegionRadius), localGesturePos.y, localGesturePos.z)
+        );
+        yTrail.UpdateTwoPoints(
+            new Vector3(localGesturePos.x, Math.Max(localGesturePos.y, RegionRadius), localGesturePos.z),
+            new Vector3(localGesturePos.x, Math.Min(localGesturePos.y, -RegionRadius), localGesturePos.z)
+        );
+        zTrail.UpdateTwoPoints(
+            new Vector3(localGesturePos.x, localGesturePos.y, RegionRadius),
+            new Vector3(localGesturePos.x, localGesturePos.y, localGesturePos.z)
+        );
+
+        Vector3 smoothedLocalGesturePos = Vector3.Lerp(lastLocalGesturePos != Vector3.zero ? lastLocalGesturePos : localGesturePos, localGesturePos, Time.deltaTime * SmoothingFactor);
+        lastLocalGesturePos = localGesturePos;
+        gestureTrail.DrawPoint(smoothedLocalGesturePos);
+    }
+
+    public void ShowFeedback()
+    {
+        feedbackSphereRenderer.enabled = true;
+        foreach (var renderer in markRenderers)
+            renderer.enabled = true;
+    }
+
+    public void HideFeedback()
+    {
+        feedbackSphereRenderer.enabled = false;
+        foreach (var renderer in markRenderers)
+            renderer.enabled = false;
+        lastLocalGesturePos = Vector3.zero;
+        xTrail.Clear();
+        yTrail.Clear();
+        zTrail.Clear();
+    }
+    #endregion
+}
+internal class TrailHandler
 {
     #region Constants
     private const float SimplificationTolerance = 0.0002f;
@@ -1201,13 +1226,12 @@ public class TrailHandler
             lineRenderer.Simplify(SimplificationTolerance);
     }
 
-    public void DrawPoints(Vector3[] points)
+    public void UpdateTwoPoints(Vector3 point1, Vector3 point2)
     {
-        lineRenderer.positionCount = points.Length;
-        for (int i = 0; i < points.Length; i++)
-            lineRenderer.SetPosition(i, points[i]);
-        if (lineRenderer.positionCount > 1)
-            lineRenderer.Simplify(SimplificationTolerance);
+        if (lineRenderer.positionCount != 2)
+            lineRenderer.positionCount = 2;
+        lineRenderer.SetPosition(0, point1);
+        lineRenderer.SetPosition(1, point2);
     }
 
     public void Clear()
