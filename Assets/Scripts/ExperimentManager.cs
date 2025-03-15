@@ -138,6 +138,11 @@ public class ExperimentManager : MonoBehaviour
                     RestartStageFromInitialization();
                 break;
         }
+
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            ResetCoordinateFrame();
+        }
     }
     #endregion
 
@@ -605,6 +610,15 @@ public class ExperimentManager : MonoBehaviour
     private void RecordCurrentTransform()
     {
         localCoordinateFrame.transform.SetPositionAndRotation(mainCameraTransform.position, mainCameraTransform.rotation);
+    }
+
+    private void ResetCoordinateFrame()
+    {
+        RecordCurrentTransform();
+        PositionObject(informationBoard, localCoordinateFrame.transform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+        PositionObject(interactionCubeLeft, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeLeftRotation, InteractionCubeDistance);
+        PositionObject(interactionCubeRight, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeRightRotation, InteractionCubeDistance);
     }
 
     private void InitializeHandSubsystem(Action<XRHandSubsystem, XRHandSubsystem.UpdateSuccessFlags, XRHandSubsystem.UpdateType> onUpdate)
