@@ -10,6 +10,7 @@ using UnityEngine.UI;
 using System.Diagnostics;
 using Unity.XR.CoreUtils;
 using System.Threading.Tasks;
+using UnityEngine.XR;
 
 public class ExperimentManager : MonoBehaviour
 {
@@ -815,6 +816,8 @@ internal class GestureHandler
     private readonly Transform mainCameraTransform;
     private readonly List<Vector3> headsetPositions = new List<Vector3>();
     private readonly List<Quaternion> headsetRotations = new List<Quaternion>();
+    private readonly List<Vector3> headsetVelocities = new List<Vector3>();
+    private readonly List<Vector3> headsetAngularVelocities = new List<Vector3>();
 
     private readonly List<Vector3> gesture = new List<Vector3>();
     private readonly List<long> timestamps = new List<long>();
@@ -937,8 +940,20 @@ internal class GestureHandler
 
         gesture.Add(localGesturePos);
         timestamps.Add(timestamp);
+
         headsetPositions.Add(localHeadsetPos);
         headsetRotations.Add(localHeadsetRot);
+
+        InputDevice headset = InputDevices.GetDeviceAtXRNode(XRNode.Head);
+        if (headset.TryGetFeatureValue(CommonUsages.deviceVelocity, out Vector3 velocity))
+        {
+            headsetVelocities.Add(velocity);
+        }
+        if (headset.TryGetFeatureValue(CommonUsages.deviceAngularVelocity, out Vector3 angularVelocity))
+        {
+            headsetAngularVelocities.Add(angularVelocity);
+        }
+
         RecordJoints(subsystem);
 
         visualFeedbackHandler.UpdateFeedback(localGesturePos, isOutOfDistance, isOutOfRegion);
@@ -981,9 +996,11 @@ internal class GestureHandler
         List<float> jointRadiiCopy = new List<float>(jointRadii);
         List<Vector3> headsetPositionsCopy = new List<Vector3>(headsetPositions);
         List<Quaternion> headsetRotationsCopy = new List<Quaternion>(headsetRotations);
+        List<Vector3> headsetVelocitiesCopy = new List<Vector3>(headsetVelocities);
+        List<Vector3> headsetAngularVelocitiesCopy = new List<Vector3>(headsetAngularVelocities);
 
         Task.Run(() => SaveTimestamps(dir, timestampsCopy));
-        Task.Run(() => SaveHeadsetData(dir, headsetPositionsCopy, headsetRotationsCopy));
+        Task.Run(() => SaveHeadsetData(dir, headsetPositionsCopy, headsetRotationsCopy, headsetVelocitiesCopy, headsetAngularVelocitiesCopy));
         Task.Run(() => SaveJointData(dir, jointPositionsCopy, jointRotationsCopy, jointRadiiCopy));
     }
 
@@ -1012,9 +1029,12 @@ internal class GestureHandler
         }
     }
 
-    private void SaveHeadsetData(string dir, List<Vector3> headsetPositionsCopy, List<Quaternion> headsetRotationsCopy)
+    private void SaveHeadsetData(string dir, List<Vector3> headsetPositionsCopy, List<Quaternion> headsetRotationsCopy, 
+        List<Vector3> headsetVelocitiesCopy, List<Vector3> headsetAngularVelocitiesCopy)
     {
-        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset_positions.csv")))
+        Directory.CreateDirectory(Path.Combine(experimentPath, dir, "headset"));
+
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset", "headset_positions.csv")))
         {
             sw.WriteLine(dir);
             sw.WriteLine(headsetPositionsCopy.Count);
@@ -1022,12 +1042,28 @@ internal class GestureHandler
                 sw.WriteLine($"{p.x:0.#######};{p.y:0.#######};{p.z:0.#######}");
         }
 
-        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset_rotations.csv")))
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset", "headset_rotations.csv")))
         {
             sw.WriteLine(dir);
             sw.WriteLine(headsetRotationsCopy.Count);
             foreach (var q in headsetRotationsCopy)
                 sw.WriteLine($"{q.x:0.#######};{q.y:0.#######};{q.z:0.#######};{q.w:0.#######}");
+        }
+
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset", "headset_velocities.csv")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(headsetVelocitiesCopy.Count);
+            foreach (var a in headsetVelocitiesCopy)
+                sw.WriteLine($"{a.x:0.#######};{a.y:0.#######};{a.z:0.#######}");
+        }
+
+        using (var sw = new StreamWriter(Path.Combine(experimentPath, dir, "headset", "headset_angular_velocities.csv")))
+        {
+            sw.WriteLine(dir);
+            sw.WriteLine(headsetAngularVelocitiesCopy.Count);
+            foreach (var av in headsetAngularVelocitiesCopy)
+                sw.WriteLine($"{av.x:0.#######};{av.y:0.#######};{av.z:0.#######}");
         }
     }
 
@@ -1110,6 +1146,8 @@ internal class GestureHandler
         timestamps.Clear();
         headsetPositions.Clear();
         headsetRotations.Clear();
+        headsetVelocities.Clear();
+        headsetAngularVelocities.Clear();
         foreach (var joint in validJoints)
         {
             jointPositions[joint.ToIndex()].Clear();
