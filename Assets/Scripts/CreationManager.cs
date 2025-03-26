@@ -20,13 +20,13 @@ internal class CreationManager : ExperimentManager
     #region Enums
     private enum ExtendedExperimentStage
     {
-        Tutorial = ExperimentStage.Collect + 1,
+        Tutorial = ExperimentStage.Finish + 1,
         Create,
         Match,
         Practice,
         Distract,
         Recall,
-        RecallSetup
+        Repeat
     }
 
     private enum TutorialStage
@@ -41,7 +41,7 @@ internal class CreationManager : ExperimentManager
     #region Fields
     private TutorialStage currentTutorialStage;
     private string sampleDir, queryDir;
-    private uint currentPracticeAttempt, currentRecallAttempt;
+    private uint currentPracticeAttempt, currentRecallAttempt, currentRepeatAttempt, currentRepeatRound;
     private bool isDistractFinished, isRecallSuccessful;
     private readonly Stopwatch stageTimer = new Stopwatch();
     private readonly Stopwatch feedbackTimer = new Stopwatch();
@@ -52,7 +52,9 @@ internal class CreationManager : ExperimentManager
     #region Serialized Fields
     [SerializeField] private uint practiceRounds;
     [SerializeField] private uint recallAttempts;
+    [SerializeField] private uint repeatRounds;
     [SerializeField] private long distractTimeSeconds;
+    [SerializeField] private ExtendedExperimentStage continueFromStage;
     #endregion
 
     #region Unity Methods
@@ -112,7 +114,8 @@ internal class CreationManager : ExperimentManager
 
         gestureHandler = new GestureHandler(experimentPath, mainCameraTransform, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine),
             new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, feedbackSphere);
-        TransitionToRecallSetup();
+
+        TransitionToSetup();
     }
 
     private void CreateExperimentDirectories()
@@ -142,22 +145,39 @@ internal class CreationManager : ExperimentManager
     #region Stage Transitions
     protected override void TransitionToNextStage()
     {
-        if (currentStage == ExperimentStage.Setup)
+        if (continueExperiment)
+            TransitionToCheckpointStage();
+        else
             TransitionToTutorial();
+    }
+
+    private void TransitionToCheckpointStage()
+    {
+        switch (continueFromStage)
+        {
+            case ExtendedExperimentStage.Practice:
+                TransitionToPractice();
+                break;
+            case ExtendedExperimentStage.Recall:
+                TransitionToRecall();
+                break;
+            case ExtendedExperimentStage.Repeat:
+                TransitionToRepeat();
+                break;
+            default:
+                TransitionToTutorial();
+                break;
+        }
     }
 
     private void TransitionToTutorial()
     {
         currentStage = (ExperimentStage)ExtendedExperimentStage.Tutorial;
-        SetInformationUI(center: true, picture: true);
-        interactionRegion.GetComponent<LineRenderer>().enabled = true;
-        EnableTutorialElements(true);
-        infoTextCenter.text = "Pinch with your <b>right</b> hand to start a gesture\nRelease the pinch to finish a gesture\nConnect two dots starting from the <color=red>RED</color> dot";
-        infoPicture.sprite = rightHandPinchSprite;
+        SetupTutorialUI();
 
         PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
-        ConfigureGestureCallbacks(TutorialStageFailed);
         SetupTutorialStep();
+        
         InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
     }
 
@@ -169,14 +189,11 @@ internal class CreationManager : ExperimentManager
 
         isFeedbackActive = false;
         gestureHandler.Clear();
-        SetInformationUI(center: true, picture: true);
-        interactionRegion.GetComponent<LineRenderer>().enabled = true;
-        infoTextCenter.text = "Create a gesture\nDraw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
-        infoPicture.sprite = rightHandPinchSprite;
+        SetupCreateUI();
 
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
         sampleDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_create";
         Directory.CreateDirectory(Path.Combine(experimentPath, sampleDir));
-        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
 
         ConfigureGestureCallbacks(CreateStageFailed, CreateStagePassed);
         InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
@@ -186,14 +203,11 @@ internal class CreationManager : ExperimentManager
     {
         currentStage = (ExperimentStage)ExtendedExperimentStage.Match;
         gestureHandler.Clear();
-        SetInformationUI(center: true, picture: true);
-        interactionRegion.GetComponent<LineRenderer>().enabled = true;
-        infoTextCenter.text = "Match the gesture\nDraw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
-        infoPicture.sprite = rightHandPinchSprite;
+        SetupMatchUI();
 
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
         queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_match";
         Directory.CreateDirectory(Path.Combine(experimentPath, queryDir));
-        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
 
         ConfigureGestureCallbacks(MatchStageFailed, () =>
         {
@@ -250,7 +264,7 @@ internal class CreationManager : ExperimentManager
             isStageActive = false;
             Log($"Recall Time: {stageTimer.ElapsedMilliseconds}ms");
             Log($"Recall Fails: {(isRecallSuccessful ? currentRecallAttempt - 1 : recallAttempts)}");
-            TransitionToFinish();
+            TransitionToRepeat();
             return;
         }
 
@@ -270,6 +284,40 @@ internal class CreationManager : ExperimentManager
         InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
     }
 
+    private void TransitionToRepeat()
+    {
+        currentStage = (ExperimentStage)ExtendedExperimentStage.Repeat;
+        gestureHandler.Clear();
+        SetInformationUI();
+
+        if (currentRepeatRound >= repeatRounds)
+        {
+            stageTimer.Stop();
+            isStageActive = false;
+            Log($"Repeat Time: {stageTimer.ElapsedMilliseconds}ms");
+            TransitionToFinish();
+            return;
+        }
+
+        currentRepeatAttempt++;
+        Log($"Repeat round {currentRepeatRound + 1}/{repeatRounds}");
+        SetupRepeatUI();
+        queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_repeat_{currentRepeatRound}_{currentRepeatAttempt}";
+        Directory.CreateDirectory(Path.Combine(experimentPath, queryDir));
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+        
+        ConfigureGestureCallbacks(() =>
+        {
+            infoTextCenterBottom.text = "<color=red>The gesture doesn't match! Try again.</color>";
+            TransitionToRepeat();
+        }, () => {
+            currentRepeatRound++;
+            infoTextCenterBottom.text = "<color=green>The gesture matches!</color>";
+            TransitionToRepeat();
+        });
+        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+    }
+
     private void TransitionToFinish()
     {
         currentStage = ExperimentStage.Finish;
@@ -280,28 +328,6 @@ internal class CreationManager : ExperimentManager
         Log($"Total Time: {totalTimer.ElapsedMilliseconds / 1000}s");
     }
 
-    private void TransitionToRecallSetup()
-    {
-        currentStage = (ExperimentStage)ExtendedExperimentStage.RecallSetup;
-        gestureHandler.Clear();
-        SetInformationUI(center: true, picture: true);
-        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
-        infoTextCenter.text = "Welcome back\nPut your <b>right</b> hand into the cube and wait to continue";
-        infoPicture.sprite = rightHandOpenSprite;
-
-        interactionHandler.PromptUser = () =>
-        {
-            PositionObject(informationBoard, mainCameraTransform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
-            PositionObject(interactionCubeLeft, mainCameraTransform, InteractionCubePositionOffset, InteractionCubePositionOffset, Quaternion.identity, InteractionCubeDistance);
-        };
-        interactionHandler.OnCube1Selected = () =>
-        {
-            RecordCurrentTransform();
-            TransitionToRecall();
-        };
-        interactionHandler.OnCube2Selected = null;
-        InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
-    }
     #endregion
 
     #region Stage Updates
@@ -356,8 +382,6 @@ internal class CreationManager : ExperimentManager
     {
         if (currentStage == ExperimentStage.Setup)
             TransitionToSetup();
-        else if (currentStage == (ExperimentStage)ExtendedExperimentStage.RecallSetup)
-            TransitionToRecallSetup();
     }
     #endregion
 
@@ -393,11 +417,11 @@ internal class CreationManager : ExperimentManager
             _ => throw new InvalidOperationException("Unknown tutorial stage")
         };
 
-        gestureHandler.OnGesturePassed = () =>
+        ConfigureGestureCallbacks(TutorialStageFailed, () =>
         {
             onPass();
             infoTextCenter.text = $"<color=green>The gesture matches the example!</color>\n\n{infoTextCenter.text}";
-        };
+        });
     }
 
     private void CreateStagePassed()
@@ -445,21 +469,49 @@ internal class CreationManager : ExperimentManager
     private void PracticeStagePassed() => PromptToContinue(TransitionToPractice, "<color=green>The gestures match!</color>");
     private void RecallStageFailed() => PromptToContinue(TransitionToRecall, "<color=red>The gestures don't match!</color>");
 
+    private void SetupTutorialUI()
+    {
+        SetInformationUI(center: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        EnableTutorialElements(true);
+        infoTextCenter.text = "Pinch with your <b>right</b> hand to start a gesture\nRelease the pinch to finish a gesture\nConnect two dots starting from the <color=red>RED</color> dot";
+        infoPicture.sprite = rightHandPinchSprite;
+    }
+    private void SetupCreateUI()
+    {
+        SetInformationUI(center: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenter.text = "Create a gesture\nDraw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
+        infoPicture.sprite = rightHandPinchSprite;
+    }
+    private void SetupMatchUI()
+    {
+        SetInformationUI(center: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenter.text = "Match the gesture\nDraw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
+        infoPicture.sprite = rightHandPinchSprite;
+    }
     private void SetupPracticeUI()
     {
+        SetInformationUI(centerTop: true, centerBottom: true, picture: true);
         interactionRegion.GetComponent<LineRenderer>().enabled = true;
-        infoTextCenterTop.enabled = infoTextCenterBottom.enabled = infoPicture.enabled = true;
         infoTextCenterTop.text = $"Practice {currentPracticeAttempt}/{practiceRounds}";
         infoTextCenterBottom.text = "Draw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
         infoPicture.sprite = rightHandPinchSprite;
     }
-
     private void SetupRecallUI()
     {
+        SetInformationUI(centerTop: true, centerBottom: true, picture: true);
         interactionRegion.GetComponent<LineRenderer>().enabled = true;
-        infoTextCenterTop.enabled = infoTextCenterBottom.enabled = infoPicture.enabled = true;
         infoTextCenterTop.text = $"Recall Attempt {currentRecallAttempt}/{recallAttempts}";
         infoTextCenterBottom.text = "Draw your gesture inside the <color=#00FFFFFF>highlighted</color> area";
+        infoPicture.sprite = rightHandPinchSprite;
+    }
+    private void SetupRepeatUI()
+    {
+        SetInformationUI(centerTop: true, centerBottom: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenterTop.text = $"Repeat {currentRepeatRound}/{repeatRounds}";
         infoPicture.sprite = rightHandPinchSprite;
     }
     #endregion

@@ -2171,10 +2171,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   subjectCode: test
-  continueExperiment: 0
-  practiceRounds: 3
-  recallAttempts: 3
-  distractTimeSeconds: 3
+  continueExperiment: 1
   gestureTrail: {fileID: 2073958891}
   xLine: {fileID: 218889521}
   yLine: {fileID: 111900083}
@@ -2201,6 +2198,11 @@ MonoBehaviour:
   infoPicture: {fileID: 2125551630}
   rightHandPinchSprite: {fileID: 21300000, guid: 253f67561ff7fd548906e1caefe823de, type: 3}
   rightHandOpenSprite: {fileID: 21300000, guid: e93d951b1827f9346a1347c08e8b6743, type: 3}
+  practiceRounds: 2
+  recallAttempts: 2
+  repeatRounds: 2
+  distractTimeSeconds: 1
+  continueFromStage: 9
 --- !u!1 &935940900
 GameObject:
   m_ObjectHideFlags: 0

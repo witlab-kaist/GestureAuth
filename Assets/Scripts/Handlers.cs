@@ -569,7 +569,7 @@ internal class VisualFeedbackHandler
 internal class TrailHandler
 {
     #region Constants
-    private const float SimplificationTolerance = 0.00005f;
+    private const float SimplificationTolerance = 0.0001f;
     #endregion
 
     #region Fields
