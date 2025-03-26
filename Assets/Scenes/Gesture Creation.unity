@@ -2171,7 +2171,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   subjectCode: test
-  continueExperiment: 1
+  continueExperiment: 0
   gestureTrail: {fileID: 2073958891}
   xLine: {fileID: 218889521}
   yLine: {fileID: 111900083}
@@ -2203,6 +2203,7 @@ MonoBehaviour:
   repeatRounds: 2
   distractTimeSeconds: 1
   continueFromStage: 9
+  enforce3DGesture: 0
 --- !u!1 &935940900
 GameObject:
   m_ObjectHideFlags: 0

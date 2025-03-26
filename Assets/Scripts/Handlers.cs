@@ -105,6 +105,7 @@ internal class GestureHandler
     private const float PinchDisableDistanceThreshold = 0.04f;
     private const long PinchIgnoreTimeThresholdMs = 500;
     private const float GestureIgnoreLengthThreshold = 0.1f;
+    private const float Gesture3DRatioThreshold = 0.1f;
     private const float SimplificationTolerance = 0.13f;
     private const long DistanceToleranceMs = 1500;
     private const long RegionToleranceMs = 1500;
@@ -452,6 +453,47 @@ internal class GestureHandler
         for (int i = 1; i < gesture.Count; i++)
             total += (gesture[i] - gesture[i - 1]).magnitude;
         return total;
+    }
+
+    public bool IsGesture3D()
+    {
+        if (gesture == null || gesture.Count < 3)
+            return false;
+        Vector3 mean = Vector3.zero;
+        foreach (var pt in gesture)
+            mean += pt;
+        mean /= gesture.Count;
+        float xx = 0, xy = 0, xz = 0;
+        float yy = 0, yz = 0, zz = 0;
+        foreach (var pt in gesture)
+        {
+            Vector3 d = pt - mean;
+            xx += d.x * d.x;
+            xy += d.x * d.y;
+            xz += d.x * d.z;
+            yy += d.y * d.y;
+            yz += d.y * d.z;
+            zz += d.z * d.z;
+        }
+        int n = gesture.Count;
+        xx /= n; xy /= n; xz /= n;
+        yy /= n; yz /= n; zz /= n;
+        float m = (xx + yy + zz) / 3f;
+        float a00 = xx - m, a11 = yy - m, a22 = zz - m;
+        float p2 = a00 * a00 + a11 * a11 + a22 * a22 + 2 * (xy * xy + xz * xz + yz * yz);
+        float p = Mathf.Sqrt(p2 / 6f);
+        float detB = (a00 * (a11 * a22 - yz * yz) - xy * (xy * a22 - xz * yz) + xz * (xy * yz - a11 * xz)) / (p * p * p);
+        detB = Mathf.Clamp(detB, -1f, 1f);
+        float theta = Mathf.Acos(detB) / 3f;
+        float eig1 = m + 2 * p * Mathf.Cos(theta);
+        float eig3 = m + 2 * p * Mathf.Cos(theta + (2 * Mathf.PI / 3f));
+        float eig2 = 3 * m - eig1 - eig3;
+        float maxEig = Mathf.Max(eig1, Mathf.Max(eig2, eig3));
+        float minEig = Mathf.Min(eig1, Mathf.Min(eig2, eig3));
+        if (Mathf.Approximately(maxEig, 0f))
+            return false;
+        float ratio = minEig / maxEig;
+        return ratio >= Gesture3DRatioThreshold;
     }
 
     public void Clear()

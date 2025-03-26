@@ -55,6 +55,7 @@ internal class CreationManager : ExperimentManager
     [SerializeField] private uint repeatRounds;
     [SerializeField] private long distractTimeSeconds;
     [SerializeField] private ExtendedExperimentStage continueFromStage;
+    [SerializeField] private bool enforce3DGesture;
     #endregion
 
     #region Unity Methods
@@ -576,6 +577,14 @@ internal class CreationManager : ExperimentManager
         Log($"Gesture length: {length}");
 
         bool isValid = simplificationScore >= GestureSimplificationScoreThreshold && length >= GestureLengthThreshold;
+
+        if (enforce3DGesture)
+        {
+            bool is3D = gestureHandler.IsGesture3D();
+            Log($"Gesture 3D check: {(is3D ? "3D" : "Not 3D")}");
+            isValid = isValid && is3D;
+        }
+
         Log($"Draw Time ({(isValid ? "Valid" : "Invalid")}): {gestureHandler.DrawTimeMs}ms");
         (isValid ? gestureHandler.OnGesturePassed : gestureHandler.OnGestureFailed)?.Invoke();
     }
