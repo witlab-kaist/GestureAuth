@@ -25,8 +25,7 @@ internal class InteractionHandler
 
     #region Fields
     private readonly GameObject cube1, cube2;
-    private readonly Stopwatch timer1 = new Stopwatch();
-    private readonly Stopwatch timer2 = new Stopwatch();
+    private readonly Stopwatch timer1 = new Stopwatch(), timer2 = new Stopwatch();
     private bool isColliding1, isColliding2;
     private readonly Vector3 originalScale;
     private readonly Color originalColor;
@@ -102,10 +101,11 @@ internal class GestureHandler
     #region Constants
     private const float PinchEntryThreshold = 0.9f;
     private const float PinchDistanceThreshold = 0.02f;
-    private const float PinchDisableDistanceThreshold = 0.04f;
+    private const float PinchDisableDistanceThreshold = 0.03f;
     private const long PinchIgnoreTimeThresholdMs = 500;
+
     private const float GestureIgnoreLengthThreshold = 0.1f;
-    private const float Gesture3DRatioThreshold = 0.1f;
+    
     private const float SimplificationTolerance = 0.13f;
     private const long DistanceToleranceMs = 1500;
     private const long RegionToleranceMs = 1500;
@@ -143,9 +143,7 @@ internal class GestureHandler
     private readonly List<List<Quaternion>> jointRotations;
     private readonly List<float> jointRadii;
 
-    private readonly Stopwatch drawTimer = new Stopwatch();
-    private readonly Stopwatch distanceTimer = new Stopwatch();
-    private readonly Stopwatch regionTimer = new Stopwatch();
+    private readonly Stopwatch drawTimer = new Stopwatch(), distanceTimer = new Stopwatch(), regionTimer = new Stopwatch();
     private bool isOutOfDistance, isOutOfRegion;
     #endregion
 
@@ -447,20 +445,11 @@ internal class GestureHandler
         return simplified.Count;
     }
 
-    public float Length()
+    public float DimensionScore()
     {
-        float total = 0;
-        for (int i = 1; i < gesture.Count; i++)
-            total += (gesture[i] - gesture[i - 1]).magnitude;
-        return total;
-    }
-
-    public bool IsGesture3D()
-    {
-        if (gesture == null || gesture.Count < 3)
-            return false;
+        if (gesture == null || gesture.Count < 3) return 0;
         Vector3 mean = Vector3.zero;
-        foreach (var pt in gesture)
+        foreach (var pt in gesture) 
             mean += pt;
         mean /= gesture.Count;
         float xx = 0, xy = 0, xz = 0;
@@ -490,10 +479,17 @@ internal class GestureHandler
         float eig2 = 3 * m - eig1 - eig3;
         float maxEig = Mathf.Max(eig1, Mathf.Max(eig2, eig3));
         float minEig = Mathf.Min(eig1, Mathf.Min(eig2, eig3));
-        if (Mathf.Approximately(maxEig, 0f))
-            return false;
+        if (Mathf.Approximately(maxEig, 0f)) return 0;
         float ratio = minEig / maxEig;
-        return ratio >= Gesture3DRatioThreshold;
+        return ratio;
+    }
+
+    public float Length()
+    {
+        float total = 0;
+        for (int i = 1; i < gesture.Count; i++)
+            total += (gesture[i] - gesture[i - 1]).magnitude;
+        return total;
     }
 
     public void Clear()
@@ -517,7 +513,7 @@ internal class GestureHandler
 internal class VisualFeedbackHandler
 {
     #region Constants
-    private const float SmoothingFactor = 32f; //16f;
+    private const float SmoothingFactor = 16f; //16f;
     private const float RegionRadius = 0.5f;
     #endregion
 
@@ -585,7 +581,7 @@ internal class VisualFeedbackHandler
         );
 
         Vector3 smoothedLocalGesturePos = Vector3.Lerp(lastLocalGesturePos != Vector3.zero ? lastLocalGesturePos : localGesturePos, localGesturePos, Time.deltaTime * SmoothingFactor);
-        lastLocalGesturePos = localGesturePos;
+        lastLocalGesturePos = smoothedLocalGesturePos;
         gestureTrail.DrawPoint(smoothedLocalGesturePos);
     }
 
@@ -611,7 +607,7 @@ internal class VisualFeedbackHandler
 internal class TrailHandler
 {
     #region Constants
-    private const float SimplificationTolerance = 0.0001f;
+    private const float SimplificationTolerance = 0.0002f;
     #endregion
 
     #region Fields

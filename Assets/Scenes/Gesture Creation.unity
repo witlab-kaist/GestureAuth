@@ -2198,12 +2198,12 @@ MonoBehaviour:
   infoPicture: {fileID: 2125551630}
   rightHandPinchSprite: {fileID: 21300000, guid: 253f67561ff7fd548906e1caefe823de, type: 3}
   rightHandOpenSprite: {fileID: 21300000, guid: e93d951b1827f9346a1347c08e8b6743, type: 3}
-  practiceRounds: 2
-  recallAttempts: 2
-  repeatRounds: 2
-  distractTimeSeconds: 1
-  continueFromStage: 9
   enforce3DGesture: 0
+  practiceRounds: 10
+  recallAttempts: 5
+  collectRounds: 30
+  distractTimeSeconds: 60
+  continueFromStage: 2
 --- !u!1 &935940900
 GameObject:
   m_ObjectHideFlags: 0
@@ -2250,8 +2250,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_ProcessorExampleMode: 1
-  m_LeftHandSmoothingFactor: 16
-  m_RightHandSmoothingFactor: 16
+  m_LeftHandSmoothingFactor: 0
+  m_RightHandSmoothingFactor: 0
 --- !u!114 &935940903
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -2,46 +2,34 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using UnityEngine;
 using UnityEngine.XR.Hands;
 using TMPro;
 using UnityEngine.UI;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 internal abstract class ExperimentManager : MonoBehaviour
 {
     #region Constants
     protected const double GestureScoreThreshold = 0.25f;
+
     protected const float BoardDistance = 4f;
     protected const float InteractionCubeDistance = 0.4f;
     protected const float InteractionRegionDistance = 0.2f;
-
     protected static readonly Vector3 BoardPositionOffset = new Vector3(0, 1f, 0);
     protected static readonly Vector3 InteractionCubePositionOffset = new Vector3(0, -0.195f, 0);
     protected static readonly Vector3 InteractionRegionPositionOffset = new Vector3(0, -0.195f, 0);
-    protected static readonly Quaternion InteractionCubeLeftRotation = Quaternion.Euler(0, -40, 0);
-    protected static readonly Quaternion InteractionCubeRightRotation = Quaternion.Euler(0, 40, 0);
-    #endregion
-
-    #region Enums
-    protected enum ExperimentStage
-    {
-        Uninitialized,
-        Setup,
-        Collect,
-        Finish
-    }
+    protected static readonly Quaternion InteractionCubeLeftRotation = Quaternion.Euler(0, -60, 0);
+    protected static readonly Quaternion InteractionCubeRightRotation = Quaternion.Euler(0, 60, 0);
     #endregion
 
     #region Fields
-    protected ExperimentStage currentStage;
     protected string experimentPath, logPath;
     protected XRHandSubsystem handSubsystem;
     protected GestureHandler gestureHandler;
     protected InteractionHandler interactionHandler;
     protected GameObject localCoordinateFrame;
-    protected readonly Stopwatch totalTimer = new Stopwatch();
     #endregion
 
     #region Serialized Fields
@@ -79,18 +67,11 @@ internal abstract class ExperimentManager : MonoBehaviour
     protected virtual void Start()
     {
         InitializeExperiment();
-        experimentPath = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), GetExperimentType(), $"Sub_{subjectCode}");
 
         if (continueExperiment)
             LoadPreviousExperiment();
         else
             SetupNewExperiment();
-    }
-
-    protected virtual void Update()
-    {
-        if (currentStage == ExperimentStage.Setup && handSubsystem == null)
-            TransitionToSetup();
     }
     #endregion
 
@@ -99,6 +80,7 @@ internal abstract class ExperimentManager : MonoBehaviour
     {
         localCoordinateFrame = new GameObject("LocalCoordinateFrame");
         interactionHandler = new InteractionHandler(interactionCubeLeft, interactionCubeRight);
+        experimentPath = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), GetExperimentType(), $"Sub_{subjectCode}");
     }
     protected abstract string GetExperimentType();
     protected abstract void SetupNewExperiment();
@@ -108,12 +90,16 @@ internal abstract class ExperimentManager : MonoBehaviour
     #region Stage Transitions
     protected virtual void TransitionToSetup()
     {
-        currentStage = ExperimentStage.Setup;
-        SetInformationUI(center: true, picture: true);
-        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
-        infoTextCenter.text = "Put your <b>right</b> hand into the cube and wait to start";
-        infoPicture.sprite = rightHandOpenSprite;
+        SetupSetupUI();
+        SetupSetupStage();
+    }
 
+    protected abstract void TransitionToNextStage();
+    #endregion
+
+    #region Stage Updates
+    private void SetupSetupStage()
+    {
         interactionHandler.PromptUser = () =>
         {
             PositionObject(informationBoard, mainCameraTransform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
@@ -129,18 +115,25 @@ internal abstract class ExperimentManager : MonoBehaviour
         InitializeHandSubsystem(interactionHandler.OnUpdatedHandsPromptUser);
     }
 
-    protected abstract void TransitionToNextStage();
+    private void SetupSetupUI()
+    {
+        SetInformationUI(center: true, picture: true);
+        interactionCubeLeft.GetComponent<MeshRenderer>().enabled = true;
+        infoTextCenter.text = "Put your <b>right</b> hand into the cube and wait to start";
+        infoPicture.sprite = rightHandOpenSprite;
+    }
     #endregion
 
     #region Helpers
-    protected List<Vector3> LoadGesturePoints(string dir)
+    protected List<Vector3> LoadGesturePoints(string dir, string gesture)
     {
-        string filePath = Path.Combine(experimentPath, dir, "ex.txt");
+        string filePath = Path.Combine(experimentPath, gesture, "ex.txt");
         if (!File.Exists(filePath))
         {
-            filePath = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), "Gestures", dir, "ex.txt");
-            if (!File.Exists(filePath)) throw new FileNotFoundException($"ex.txt not found in {dir}");
+            filePath = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), dir, gesture, "ex.txt");
+            if (!File.Exists(filePath)) throw new FileNotFoundException($"ex.txt not found in {gesture}");
         }
+
         var points = new List<Vector3>();
         using (var sr = new StreamReader(filePath))
         {
@@ -175,6 +168,7 @@ internal abstract class ExperimentManager : MonoBehaviour
     protected void ResetCoordinateFrame()
     {
         RecordCurrentTransform();
+
         PositionObject(informationBoard, localCoordinateFrame.transform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
         PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
         PositionObject(interactionCubeLeft, localCoordinateFrame.transform, InteractionCubePositionOffset, InteractionCubePositionOffset, InteractionCubeLeftRotation, InteractionCubeDistance);
@@ -183,11 +177,16 @@ internal abstract class ExperimentManager : MonoBehaviour
 
     protected void InitializeHandSubsystem(Action<XRHandSubsystem, XRHandSubsystem.UpdateSuccessFlags, XRHandSubsystem.UpdateType> onUpdate)
     {
-        var handSubsystems = new List<XRHandSubsystem>();
-        SubsystemManager.GetSubsystems(handSubsystems);
-        handSubsystem = handSubsystems.FirstOrDefault(s => s.running);
-        if (handSubsystem != null)
+        Task.Run(() =>
+        {
+            var handSubsystems = new List<XRHandSubsystem>();
+            while (handSubsystem == null)
+            {
+                SubsystemManager.GetSubsystems(handSubsystems);
+                handSubsystem = handSubsystems.FirstOrDefault(s => s.running);
+            }
             handSubsystem.updatedHands += onUpdate;
+        });
     }
 
     protected void SetInformationUI(bool center = false, bool centerTop = false, bool centerBottom = false, bool left = false, bool right = false, bool picture = false)
@@ -212,11 +211,11 @@ internal abstract class ExperimentManager : MonoBehaviour
         endPoint.GetComponent<MeshRenderer>().enabled = enable;
     }
 
-    protected void Log(string message)
+    protected void Log(string message, string stage)
     {
         using (var sw = new StreamWriter(logPath, true))
         {
-            string prefix = $"[{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}] [{DateTime.Now}] {{{currentStage}}}";
+            string prefix = $"[{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}] {{{stage}}}";
             sw.WriteLine($"{prefix} {message}");
         }
     }

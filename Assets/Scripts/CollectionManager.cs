@@ -3,19 +3,28 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.Profiling;
 
 internal class CollectionManager : ExperimentManager
 {
+    #region Enums
+    private enum ExperimentStage
+    {
+        Setup,
+        Collect,
+        Finish
+    }
+    #endregion
+
     #region Fields
+    private ExperimentStage currentStage;
+    string queryDir;
     private List<List<string>> blocks;
-    private int currentBlockIndex;
-    private int currentGestureIndex;
-    private int currentAttempt;
+    private int currentBlockIndex, currentGestureIndex;
     private TrailHandler tutorialTrail;
     #endregion
 
     #region Serialized Fields
-    [SerializeField] private int maxAttempts;
     [SerializeField] private int nBlocks;
     [SerializeField] private int mGesturesPerType;
     #endregion
@@ -24,12 +33,12 @@ internal class CollectionManager : ExperimentManager
     protected override void Start()
     {
         base.Start();
+
         tutorialTrail = new TrailHandler(tutorialLine);
     }
 
-    protected override void Update()
+    protected void Update()
     {
-        base.Update();
         if (Input.GetKeyDown(KeyCode.Space))
             ResetCoordinateFrame();
     }
@@ -43,12 +52,14 @@ internal class CollectionManager : ExperimentManager
         string timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         logPath = Path.Combine(experimentPath, $"{timestamp}_log.txt");
         experimentPath = Path.Combine(experimentPath, "gestures", timestamp);
-
+        gestureHandler = new GestureHandler(experimentPath, mainCameraTransform, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine),
+            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, feedbackSphere);
+        
         if (!Directory.Exists(experimentPath))
             Directory.CreateDirectory(experimentPath);
 
         string gesturesPath = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), "Gestures");
-        var gestureSubdirs = Directory.GetDirectories(gesturesPath).Select(Path.GetFileName).ToList();
+        List<string> gestureSubdirs = Directory.GetDirectories(gesturesPath).Select(Path.GetFileName).ToList();
         gestureSubdirs.Sort();
 
         blocks = new List<List<string>>();
@@ -69,9 +80,8 @@ internal class CollectionManager : ExperimentManager
             File.Copy(Path.Combine(gesturesPath, subdir, "ex.txt"), Path.Combine(sampleDir, "ex.txt"));
         }
 
-        gestureHandler = new GestureHandler(experimentPath, mainCameraTransform, interactionRegion.transform, new TrailHandler(gestureTrail), new TrailHandler(xLine),
-            new TrailHandler(yLine), new TrailHandler(zLine), leftMark, rightMark, topMark, baseMark, frontMark, feedbackSphere);
-        totalTimer.Start();
+        currentStage = ExperimentStage.Setup;
+
         TransitionToSetup();
     }
 
@@ -84,46 +94,115 @@ internal class CollectionManager : ExperimentManager
     #region Stage Transitions
     protected override void TransitionToNextStage()
     {
-        if (currentStage == ExperimentStage.Setup)
-            TransitionToCollect();
+        TransitionToCollect();
     }
 
     private void TransitionToCollect()
     {
         currentStage = ExperimentStage.Collect;
-        SetInformationUI(center: true, picture: true);
-        interactionRegion.GetComponent<LineRenderer>().enabled = true;
-        EnableTutorialElements(true);
-        infoTextCenter.text = "Pinch with your <b>right</b> hand to start a gesture\nRelease the pinch to finish a gesture\nConnect two dots starting from the <color=red>RED</color> dot";
-        infoPicture.sprite = rightHandPinchSprite;
-
-        PositionObject(informationBoard, localCoordinateFrame.transform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
-        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
-        SetupCurrentGesture();
-
-        gestureHandler.OnGestureStarted = () => Log($"Started drawing gesture {blocks[currentBlockIndex][currentGestureIndex]}, attempt {currentAttempt + 1}");
-        gestureHandler.OnGestureFinished = ProcessGesture;
-        gestureHandler.OnGesturePassed = null;
-        gestureHandler.OnGestureFailed = null;
-        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+        
+        SetupCollectUI();
+        SetupCollectStage();
     }
 
     private void TransitionToFinish()
     {
         currentStage = ExperimentStage.Finish;
-        gestureHandler.Clear();
-        tutorialTrail.Clear();
-        SetInformationUI(center: true);
-        infoTextCenter.text = "The experiment is over. Thank you for participation!";
-        totalTimer.Stop();
-        Log($"Total Time: {totalTimer.ElapsedMilliseconds / 1000}s");
+        
+        SetupFinishUI();
     }
     #endregion
 
     #region Stage Helpers
+    private void SetupCollectStage()
+    {
+        if (currentBlockIndex >= blocks.Count)
+        {
+            TransitionToFinish();
+
+            return;
+        }
+
+        queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{blocks[currentBlockIndex][currentGestureIndex]}_block{currentBlockIndex}";
+        Directory.CreateDirectory(Path.Combine(experimentPath, queryDir));
+        
+        SetupCurrentGesture(); 
+        PositionObject(informationBoard, localCoordinateFrame.transform, BoardPositionOffset, Vector3.zero, Quaternion.identity, BoardDistance);
+        PositionObject(interactionRegion, localCoordinateFrame.transform, InteractionRegionPositionOffset, InteractionRegionPositionOffset, Quaternion.identity, InteractionRegionDistance);
+
+        Log($"Block {currentBlockIndex + 1}, Index {currentGestureIndex + 1}, {blocks[currentBlockIndex][currentGestureIndex]}", currentStage.ToString());
+
+        ConfigureGestureCallbacks(() =>
+        {
+            infoTextCenterBottom.text = "<color=red>The gesture doesn't match! Try again.</color>";
+
+            TransitionToCollect();
+        }, () =>
+        {
+
+            UpdateGestureIndex();
+
+            infoTextCenterBottom.text = "<color=green>The gesture matches!</color>";
+
+            TransitionToCollect();
+        });
+        
+        InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
+    }
+    
+    private void SetupCollectUI()
+    {
+        SetInformationUI(centerTop: true, centerBottom: true, picture: true);
+        interactionRegion.GetComponent<LineRenderer>().enabled = true;
+        infoTextCenterTop.text = $"Block {currentBlockIndex}/{nBlocks} | Collect {currentGestureIndex}/{blocks[0].Count}";
+        infoPicture.sprite = rightHandPinchSprite;
+
+        gestureHandler.Clear();
+        tutorialTrail.Clear();
+        EnableTutorialElements(true);
+    }
+    private void SetupFinishUI()
+    {
+        SetInformationUI(center: true);
+        infoTextCenter.text = "The experiment is over. Thank you for participation!";
+        
+        gestureHandler.Clear();
+        tutorialTrail.Clear();
+    }
+    #endregion
+
+    #region Helpers
+    private void ConfigureGestureCallbacks(Action onFail, Action onPass = null)
+    {
+        gestureHandler.OnGestureFailed = onFail;
+        gestureHandler.OnGesturePassed = onPass;
+        gestureHandler.OnGestureStarted = () =>
+        {
+            Log("Started drawing a gesture", currentStage.ToString());
+        };
+        gestureHandler.OnGestureFinished = () =>
+        {
+            Log("Finished drawing a gesture", currentStage.ToString());
+
+            SaveQueryRecord();
+        };
+    }
+
+    private void UpdateGestureIndex()
+    {
+        currentGestureIndex++;
+
+        if (currentGestureIndex >= blocks[currentBlockIndex].Count)
+        {
+            currentBlockIndex++;
+            currentGestureIndex = 0;
+        }
+    }
+
     private void SetupCurrentGesture()
     {
-        var points = LoadGesturePoints(blocks[currentBlockIndex][currentGestureIndex]);
+        var points = LoadGesturePoints("Gestures", blocks[currentBlockIndex][currentGestureIndex]);
+
         startPoint.transform.localPosition = points[0];
         endPoint.transform.localPosition = points[points.Count - 1];
         for (int i = 0; i < points.Count; i++)
@@ -132,59 +211,20 @@ internal class CollectionManager : ExperimentManager
         }
     }
 
-    private void ProcessGesture()
+    private void SaveQueryRecord()
     {
-        currentAttempt++;
-        string queryDir = $"{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}_{blocks[currentBlockIndex][currentGestureIndex]}_block{currentBlockIndex}_attempt{currentAttempt}";
-        string fullQueryDir = Path.Combine(experimentPath, queryDir);
-        Directory.CreateDirectory(fullQueryDir);
         gestureHandler.Save(queryDir);
-        double score = gestureHandler.JackknifeScore(blocks[currentBlockIndex][currentGestureIndex], queryDir);
-        Log($"Gesture {blocks[currentBlockIndex][currentGestureIndex]}, attempt {currentAttempt}: score {score:0.#######}");
-        bool tooManyFailedAttempts = currentAttempt >= maxAttempts;
-        if (score >= GestureScoreThreshold || tooManyFailedAttempts)
-        {
-            if (tooManyFailedAttempts)
-            {
-                Log($"Gesture {blocks[currentBlockIndex][currentGestureIndex]} failed after {maxAttempts} attempts");
-                infoTextCenter.text = "<color=red>Maximum attempts reached. Moving to next gesture.</color>";
-            }
-            else
-            {
-                Log($"Gesture {blocks[currentBlockIndex][currentGestureIndex]} matched successfully on attempt {currentAttempt}");
-                infoTextCenter.text = "<color=green>The gesture matches!</color>";
-            }
-            currentGestureIndex++;
-            currentAttempt = 0;
-            gestureHandler.Clear();
-            tutorialTrail.Clear();
-            if (currentGestureIndex < blocks[currentBlockIndex].Count)
-            {
-                SetupCurrentGesture();
-                InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
-            }
-            else
-            {
-                currentBlockIndex++;
-                if (currentBlockIndex < blocks.Count)
-                {
-                    currentGestureIndex = 0;
-                    SetupCurrentGesture();
-                    InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
-                }
-                else
-                {
-                    TransitionToFinish();
-                }
-            }
-        }
-        else
-        {
-            Log($"Gesture {blocks[currentBlockIndex][currentGestureIndex]} did not match");
-            infoTextCenter.text = "<color=red>The gesture doesn't match! Try again.</color>";
-            gestureHandler.Clear();
-            InitializeHandSubsystem(gestureHandler.OnUpdatedHandsRecord);
-        }
+
+        double matchScore = gestureHandler.JackknifeScore(blocks[currentBlockIndex][currentGestureIndex], queryDir);
+
+        Log($"Gesture match score: {matchScore:0.#######}", currentStage.ToString());
+
+        bool isMatch = matchScore >= GestureScoreThreshold;
+
+        Log($"Draw Time ({(isMatch ? "Passed" : "Failed")}): {gestureHandler.DrawTimeMs}ms", currentStage.ToString());
+
+        if (isMatch) gestureHandler.OnGesturePassed?.Invoke();
+        else gestureHandler.OnGestureFailed?.Invoke();
     }
     #endregion
 }
