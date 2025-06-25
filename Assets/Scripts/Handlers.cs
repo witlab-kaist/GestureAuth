@@ -99,7 +99,7 @@ internal class InteractionHandler
 internal class GestureHandler
 {
     #region Constants
-    private const float PinchEntryThreshold = 0.9f;
+    private const float PinchEntryDistanceThreshold = 0.01f;
     private const float PinchDistanceThreshold = 0.02f;
     private const float PinchDisableDistanceThreshold = 0.03f;
     private const long PinchIgnoreTimeThresholdMs = 500;
@@ -174,17 +174,17 @@ internal class GestureHandler
     #region Data Recording
     public void OnUpdatedHandsRecord(XRHandSubsystem subsystem, XRHandSubsystem.UpdateSuccessFlags flags, XRHandSubsystem.UpdateType type)
     {
-        float pinchStrength = MetaAimHand.right.pinchStrengthIndex.magnitude;
-        bool pinchEntered = !isGestureActive && pinchStrength >= PinchEntryThreshold;
-
-        if (pinchEntered)
+        if (!isGestureActive)
         {
-            if (TryRecordPosition(subsystem))
+            if (TryGetPinchDistance(subsystem, out float pinchDistance) && pinchDistance <= PinchEntryDistanceThreshold)
             {
-                visualFeedbackHandler.ShowFeedback();
-                OnGestureStarted?.Invoke();
-                drawTimer.Restart();
-                isGestureActive = true;
+                if (TryRecordPosition(subsystem))
+                {
+                    visualFeedbackHandler.ShowFeedback();
+                    OnGestureStarted?.Invoke();
+                    drawTimer.Restart();
+                    isGestureActive = true;
+                }
             }
         }
 
@@ -416,6 +416,19 @@ internal class GestureHandler
     #endregion
 
     #region Helpers
+    private bool TryGetPinchDistance(XRHandSubsystem subsystem, out float distance)
+    {
+        distance = float.MaxValue;
+        var indexTip = subsystem.rightHand.GetJoint(XRHandJointID.IndexTip);
+        var thumbTip = subsystem.rightHand.GetJoint(XRHandJointID.ThumbTip);
+
+        if (!indexTip.TryGetPose(out Pose indexPose) || !thumbTip.TryGetPose(out Pose thumbPose))
+            return false;
+
+        distance = Vector3.Distance(indexPose.position, thumbPose.position);
+        return true;
+    }
+
     public double JackknifeScore(string sampleDir, string queryDir)
     {
         var dataset = new Jackknife.Evaluate.Dataset();

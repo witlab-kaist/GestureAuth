@@ -2198,7 +2198,6 @@ MonoBehaviour:
   infoPicture: {fileID: 2125551630}
   rightHandPinchSprite: {fileID: 21300000, guid: 253f67561ff7fd548906e1caefe823de, type: 3}
   rightHandOpenSprite: {fileID: 21300000, guid: e93d951b1827f9346a1347c08e8b6743, type: 3}
-  maxAttempts: 5
   nBlocks: 1
   mGesturesPerType: 6
 --- !u!1 &935940900
