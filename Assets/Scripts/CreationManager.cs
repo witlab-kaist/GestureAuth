@@ -577,7 +577,7 @@ internal class CreationManager : ExperimentManager
     private void SetupFinishUI()
     {
         SetInformationUI(centerBottom: true);
-        infoTextCenterBottom.text = "The first part of the experiment is over\nPut your headset away";
+        infoTextCenterBottom.text = "This part of the experiment is over\nPut your headset away";
 
         gestureHandler.Clear();
     }
@@ -703,7 +703,8 @@ internal class CreationManager : ExperimentManager
         double matchScore;
         
         if (currentStage == ExperimentStage.Tutorial) matchScore = gestureHandler.JackknifeScore(sampleDir, queryDir);
-        else matchScore = sampleDirs.Max(sample => gestureHandler.JackknifeScore(sample, queryDir));
+        // First three samples are typically: create, match, recall
+        else matchScore = sampleDirs.Take(3).Max(sample => gestureHandler.JackknifeScore(sample, queryDir));
 
         Log($"Gesture match score: {matchScore:0.#######}", currentStage.ToString());
 

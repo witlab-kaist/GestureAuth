@@ -164,7 +164,7 @@ internal class CollectionManager : ExperimentManager
     private void SetupFinishUI()
     {
         SetInformationUI(center: true);
-        infoTextCenter.text = "The experiment is over. Thank you for participation!";
+        infoTextCenter.text = "This part of the experiment is over\nPut your headset away";
         
         gestureHandler.Clear();
         tutorialTrail.Clear();

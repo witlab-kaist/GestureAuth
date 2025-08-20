@@ -11,7 +11,8 @@
 /[Uu]ser[Ss]ettings/
 /[Cc]ollection
 /[Cc]reation
-/[Gg]estures
+/[Aa]ttack
+/[Aa]tackGesture
 
 # MemoryCaptures can get excessive in size.
 # They also could contain extremely sensitive data
