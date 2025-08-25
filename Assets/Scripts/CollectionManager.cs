@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
-using UnityEngine.Profiling;
 
 internal class CollectionManager : ExperimentManager
 {

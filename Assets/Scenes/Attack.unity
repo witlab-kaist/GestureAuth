@@ -3945,7 +3945,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 98af4e63a2dc18a45b285e4e9008b491, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  subjectCode: test
+  subjectCode: 
   continueExperiment: 0
   gestureTrail: {fileID: 393632157}
   xLine: {fileID: 1609363962}

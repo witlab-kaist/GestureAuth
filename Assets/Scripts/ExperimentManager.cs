@@ -6,7 +6,6 @@ using UnityEngine;
 using UnityEngine.XR.Hands;
 using TMPro;
 using UnityEngine.UI;
-using System.Diagnostics;
 using System.Threading.Tasks;
 
 internal abstract class ExperimentManager : MonoBehaviour

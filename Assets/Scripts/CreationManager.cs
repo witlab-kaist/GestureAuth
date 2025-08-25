@@ -4,9 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
-using UnityEngine.XR.Hands;
-using TMPro;
-using UnityEngine.UI;
 using System.Diagnostics;
 
 internal class CreationManager : ExperimentManager
