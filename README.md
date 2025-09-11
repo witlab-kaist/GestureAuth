@@ -17,29 +17,30 @@ Data and example gestures are provided in **Jackknife** format (see **Citing Jac
 ---
 
 ## Repository Layout
-gesture-authentication/
-├─ 2D/ # 10 two-dimensional gestures (Jackknife format)
-├─ 3D/ # 10 three-dimensional gestures (Jackknife format)
-├─ Tutorial/ # 4 tutorial gestures (Jackknife format)
-├─ Assets/
-│ ├─ Jackknife/ # Jackknife implementation (see citations below)
-│ ├─ Materials/ Samples/ Sprites/ TextMesh Pro/ XR/ *.meta
-│ ├─ Scenes/
-│ │ ├─ Attack.unity # Attack study scene
-│ │ ├─ Collection.unity # Dictionary gestures study scene
-│ │ └─ Creation.unity # User-generated gestures study scene
-│ └─ Scripts/
-│ │├─ AttackManager.cs
-│ │├─ CollectionManager.cs
-│ │├─ CollisionDetection.cs
-│ │├─ CreationManager.cs
-│ │├─ ExperimentManager.cs
-│ │└─ Handlers.cs
-├─ Packages/ # Package lock manifest (dependencies)
-├─ ProjectSettings/ # Unity project settings
-├─ .gitignore
-└─ .vsconfig
-
+```
+.
+├── 2D/                     # 10 two-dimensional gestures (Jackknife format)
+├── 3D/                     # 10 three-dimensional gestures (Jackknife format)
+├── Tutorial/               # 4 tutorial gestures (Jackknife format)
+├── Assets/
+│   ├── Materials/ Samples/ Sprites/ TextMesh Pro/ XR/ *.meta
+│   ├── Jackknife/          # Jackknife implementation (see citations below)
+│   ├── Scenes/
+│   ├── Attack.unity        # Attack study scene
+│   ├── Collection.unity    # Dictionary gestures study scene
+│   ├── Creation.unity      # User-generated gestures study scene
+│   └── Scripts/
+│       ├── AttackManager.cs
+│       ├── CollectionManager.cs
+│       ├── CollisionDetection.cs
+│       ├── CreationManager.cs
+│       ├── ExperimentManager.cs
+│       └── Handlers.cs
+├── Packages/               # Package lock manifest (dependencies)
+├── ProjectSettings/        # Unity project settings
+├── .gitignore
+└── .vsconfig
+```
 
 ---
 
