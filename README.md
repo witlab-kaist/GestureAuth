@@ -200,7 +200,7 @@ Please use the following placeholder citation for now:
       year = {2026},
       location = {Barcelona, Spain},
       pages = {},
-      url = {},
+      url = {https://doi.org/10.1145/3772318.3791682},
       publisher = {ACM},
       note = {To appear}
     }
