@@ -1,8 +1,10 @@
-# gesture-authentication
+# GestureAuth
 
-_Companion repository for the (double-blind) submission:_  
-**Leveraging Biometric-Rich Hand Gestures for Head-Mounted Display Authentication.**  
-**Anonymity notice:** This repository intentionally omits author names and affiliations for anonymous review.
+![GestureAuth](teaser.png)
+
+**Leveraging Biometric-Rich Hand Gestures for Head-Mounted Display Authentication**  
+Amin Jalilov*, Eunyong Cheon*, and Ian Oakley (* co-first authors) \
+CHI '26: Proceedings of the 2026 CHI conference on Human Factors in Computing systems  
 
 ---
 
@@ -184,8 +186,23 @@ Supplementary references:
 
 ---
 
-## License
-**TBD (post-review).**  
-During anonymous review, this repository is provided for evaluation and research reproduction.
+## Citation (This Work)
+This repository accompanies a paper accepted to ACM CHI 2026.
+The official bibliographic details (DOI, page numbers) will be available after the conference is held.
+
+Please use the following placeholder citation for now:
+
+    @inproceedings{jalilov26gestureauth,
+      author = {Jalilov, Amin and Cheon, Eunyong and Oakley, Ian},
+      title = {Leveraging Biometric-Rich Hand Gestures for Head-Mounted Display Authentication},
+      booktitle = {Proceedings of the 2026 CHI Conference on Human Factors in Computing Systems},
+      series = {CHI '26},
+      year = {2026},
+      location = {Barcelona, Spain},
+      pages = {},
+      url = {},
+      publisher = {ACM},
+      note = {To appear}
+    }
 
 ---
