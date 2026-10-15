@@ -188,21 +188,25 @@ Supplementary references:
 
 ## Citation (This Work)
 This repository accompanies a paper accepted to ACM CHI 2026.
-The official bibliographic details (DOI, page numbers) will be available after the conference is held.
 
-Please use the following placeholder citation for now:
+Please use the following reference:
 
-    @inproceedings{jalilov26gestureauth,
-      author = {Jalilov, Amin and Cheon, Eunyong and Oakley, Ian},
-      title = {Leveraging Biometric-Rich Hand Gestures for Head-Mounted Display Authentication},
-      booktitle = {Proceedings of the 2026 CHI Conference on Human Factors in Computing Systems},
-      series = {CHI '26},
-      year = {2026},
-      location = {Barcelona, Spain},
-      pages = {},
-      url = {https://doi.org/10.1145/3772318.3791682},
-      publisher = {ACM},
-      note = {To appear}
+    @inproceedings{10.1145/3772318.3791682,
+     author = {Jalilov, Amin and Cheon, Eunyong and Oakley, Ian},
+     title = {Leveraging Biometric-Rich Hand Gestures for Head-Mounted Display Authentication},
+     year = {2026},
+     isbn = {9798400722783},
+     publisher = {Association for Computing Machinery},
+     address = {New York, NY, USA},
+     url = {https://doi.org/10.1145/3772318.3791682},
+     doi = {10.1145/3772318.3791682},
+     abstract = {User authentication on head-mounted displays (HMDs) relies on passwords, which are cumbersome to input and susceptible to shoulder-surfing attacks. Recent research has revealed that behavioral signals collected during common HMD tasks are highly distinctive between users. Building on these findings, this paper presents a knowledge-driven behavioral authentication system for HMDs. Our system leverages user-defined gestures as cues and trains an anomaly detector on hand joint motion signals for each user. To evaluate effectiveness, we conducted a comprehensive multi-session user study (n = 20) and an observation attack study (n = 10). The results show that gestures secured with joint motions are resilient to worst-case scenario video-based observation attacks (AUC = 0.97, EER = 3.58\%) and maintain high recall performance over one week (AUC = 0.93, EER = 9.82\%). These findings suggest that user-generated biometric hand gestures offer a promising approach to securing HMDs.},
+     booktitle = {Proceedings of the 2026 CHI Conference on Human Factors in Computing Systems},
+     articleno = {1307},
+     numpages = {19},
+     keywords = {Free-form gestures, HMD authentication, Behavioral Biometrics},
+     location = {Barcelona, Spain},
+     series = {CHI '26}
     }
 
 ---
